@@ -22,7 +22,7 @@
 local addonName, ns = ...
 
 ns.name = addonName
-local ADDON_VERSION = "1.7.0"
+local ADDON_VERSION = "1.7.1"
 
 -- ---------------------------------------------------------------------------
 -- State. Hide tooltips is not saved. The Dressing Room and dim options are.
@@ -346,7 +346,12 @@ local filterMenuDebug = {
     error = nil,
     hasGenerator = false,
     hasSetupMenu = false,
+    insertions = 0,
+    clearClick = "none",
+    clearUpdate = "none",
 }
+
+local RefreshFilterClearButton
 
 local registeredMenuTags = {}
 local legacyAddHooked = false
@@ -407,11 +412,17 @@ end
 
 local function ResetToggle()
     hideTooltips = false
+    if RefreshFilterClearButton then
+        RefreshFilterClearButton()
+    end
 end
 
 local function SetHideTooltips(want)
     if not AuctionHouseIsOpen() then
         hideTooltips = false
+        if RefreshFilterClearButton then
+            RefreshFilterClearButton()
+        end
         return
     end
     want = want and true or false
@@ -425,6 +436,21 @@ local function SetHideTooltips(want)
         RestoreTooltipUnderCursor()
     end
     PlayToggleSound(hideTooltips)
+    if RefreshFilterClearButton then
+        RefreshFilterClearButton()
+    end
+end
+
+-- Filter X clears Blizzard filters. This only drops our flag. It does not
+-- play the checkbox sound or send a browse query.
+local function ClearHideTooltipsFromReset()
+    if hideTooltips then
+        hideTooltips = false
+        RestoreTooltipUnderCursor()
+    end
+    if RefreshFilterClearButton then
+        RefreshFilterClearButton()
+    end
 end
 
 local function FrameTag(frame)
@@ -469,6 +495,18 @@ local function IsUsableLabel(text)
         return true
     end
     return lower:find("usable only", 1, true) ~= nil
+end
+
+local function IsUncollectedLabel(text)
+    if type(text) ~= "string" then
+        return false
+    end
+    local globalText = _G.AUCTION_HOUSE_FILTER_UNCOLLECTED_ONLY
+    if type(globalText) == "string" and text == globalText then
+        return true
+    end
+    local lower = PlainLower(text)
+    return lower ~= nil and lower:find("uncollected", 1, true) ~= nil
 end
 
 local function IsRarityLabel(text)
@@ -722,54 +760,308 @@ local function InsertHideTooltipsEntry(root)
     filterMenuDebug.placed = place
 end
 
-local function RegisterModifyTag(tag)
-    if type(tag) ~= "string" or tag == "" or registeredMenuTags[tag] then
+local function FindClearButton(filterButton)
+    if not filterButton then
+        return nil
+    end
+    local named = filterButton.ClearFiltersButton or filterButton.ResetButton or filterButton.ClearButton
+    if type(named) == "table" and named.SetShown then
+        local key = "ClearFiltersButton"
+        if named == filterButton.ResetButton then
+            key = "ResetButton"
+        elseif named == filterButton.ClearButton then
+            key = "ClearButton"
+        end
+        return named, key
+    end
+    if filterButton.GetChildren then
+        local children = { filterButton:GetChildren() }
+        for i = 1, #children do
+            local child = children[i]
+            local key
+            if child.GetParentKey then
+                key = child:GetParentKey()
+            end
+            if type(key) == "string" and (key:find("Clear", 1, true) or key:find("Reset", 1, true)) and child.SetShown then
+                return child, key
+            end
+        end
+    end
+    return nil
+end
+
+local function ForceClearButtonShown(filterButton)
+    if not hideTooltips then
         return
     end
-    if type(Menu) ~= "table" or type(Menu.ModifyMenu) ~= "function" then
+    local clear = FindClearButton(filterButton)
+    if clear and clear.SetShown then
+        pcall(clear.SetShown, clear, true)
+    end
+end
+
+RefreshFilterClearButton = function()
+    local ah = AuctionHouseFrame
+    local bar = ah and ah.SearchBar
+    local button = bar and bar.FilterButton or (ah and ah.FilterButton)
+    if bar and type(bar.UpdateClearFiltersButton) == "function" then
+        pcall(bar.UpdateClearFiltersButton, bar)
+    end
+    if button and type(button.UpdateClearFiltersButton) == "function" then
+        pcall(button.UpdateClearFiltersButton, button)
+    end
+    ForceClearButtonShown(button)
+end
+
+local function HookNamedMethod(object, name, after)
+    if not object or type(object[name]) ~= "function" or type(hooksecurefunc) ~= "function" then
+        return false
+    end
+    object.ahdrhHooked = object.ahdrhHooked or {}
+    if object.ahdrhHooked[name] then
+        return true
+    end
+    local ok = pcall(hooksecurefunc, object, name, after)
+    if ok then
+        object.ahdrhHooked[name] = true
+    end
+    return ok
+end
+
+local function NoteHook(field, text)
+    if filterMenuDebug[field] == "none" or filterMenuDebug[field] == nil then
+        filterMenuDebug[field] = text
         return
     end
-    registeredMenuTags[tag] = true
-    pcall(Menu.ModifyMenu, tag, function(_, rootDescription)
-        local callOk, err = pcall(InsertHideTooltipsEntry, rootDescription)
-        if not callOk then
-            filterMenuDebug.error = tostring(err)
+    if not tostring(filterMenuDebug[field]):find(text, 1, true) then
+        filterMenuDebug[field] = filterMenuDebug[field] .. "," .. text
+    end
+end
+
+local function InstallClearButtonHooks(ahFrame)
+    local bar = ahFrame and ahFrame.SearchBar
+    local button = bar and bar.FilterButton or (ahFrame and ahFrame.FilterButton)
+    if not button then
+        return
+    end
+    local function afterUpdate(self)
+        local owner = self
+        if owner and not owner.ClearFiltersButton and owner.FilterButton then
+            owner = owner.FilterButton
         end
-        if filterMenuDebug.method == "not-installed" or filterMenuDebug.method == "tag-only" then
-            filterMenuDebug.method = "Menu.ModifyMenu"
+        ForceClearButtonShown(owner)
+    end
+    local function afterReset()
+        ClearHideTooltipsFromReset()
+    end
+    local updateNames = { "UpdateClearFiltersButton", "UpdateResetButton" }
+    local barResetNames = { "ResetFilterButton", "ResetFilters", "ClearFilters", "ClearAllFilters" }
+    local buttonResetNames = { "ResetFilters", "ClearFilters", "Reset", "ResetToDefault", "ClearAllFilters" }
+    for i = 1, #updateNames do
+        if HookNamedMethod(bar, updateNames[i], afterUpdate) then
+            NoteHook("clearUpdate", "SearchBar:" .. updateNames[i])
         end
-        filterMenuDebug.tag = tag
+        if HookNamedMethod(button, updateNames[i], afterUpdate) then
+            NoteHook("clearUpdate", "FilterButton:" .. updateNames[i])
+        end
+    end
+    for i = 1, #barResetNames do
+        if HookNamedMethod(bar, barResetNames[i], afterReset) then
+            NoteHook("clearClick", "SearchBar:" .. barResetNames[i])
+        end
+    end
+    for i = 1, #buttonResetNames do
+        if HookNamedMethod(button, buttonResetNames[i], afterReset) then
+            NoteHook("clearClick", "FilterButton:" .. buttonResetNames[i])
+        end
+    end
+
+    local clear, clearKey = FindClearButton(button)
+    if clear and not clear.ahdrhClearHook and clear.HookScript then
+        local ok = pcall(clear.HookScript, clear, "OnClick", function()
+            ClearHideTooltipsFromReset()
+        end)
+        if ok then
+            clear.ahdrhClearHook = true
+            NoteHook("clearClick", "ClearButton:" .. (clearKey or "OnClick"))
+        end
+    end
+
+    if type(button.SetDefaultCallback) == "function" and not button.ahdrhDefaultHooked and type(hooksecurefunc) == "function" then
+        button.ahdrhDefaultHooked = true
+        hooksecurefunc(button, "SetDefaultCallback", function(self, callback)
+            if self.ahdrhWrappingDefault or type(callback) ~= "function" or callback == self.ahdrhDefaultWrapped then
+                return
+            end
+            self.ahdrhWrappingDefault = true
+            local wrapped = function(...)
+                ClearHideTooltipsFromReset()
+                pcall(callback, ...)
+            end
+            self.ahdrhDefaultWrapped = wrapped
+            self.defaultCallback = wrapped
+            self.ahdrhWrappingDefault = false
+        end)
+        NoteHook("clearClick", "SetDefaultCallback")
+    end
+    if type(button.defaultCallback) == "function" and button.defaultCallback ~= button.ahdrhDefaultWrapped then
+        local callback = button.defaultCallback
+        local wrapped = function(...)
+            ClearHideTooltipsFromReset()
+            pcall(callback, ...)
+        end
+        button.ahdrhDefaultWrapped = wrapped
+        button.defaultCallback = wrapped
+        NoteHook("clearClick", "defaultCallback")
+    end
+
+    if type(button.SetIsDefaultCallback) == "function" and not button.ahdrhIsDefaultHooked and type(hooksecurefunc) == "function" then
+        button.ahdrhIsDefaultHooked = true
+        hooksecurefunc(button, "SetIsDefaultCallback", function(self, callback)
+            if self.ahdrhWrappingIsDefault or callback == self.ahdrhIsDefaultWrapped then
+                return
+            end
+            self.ahdrhWrappingIsDefault = true
+            local wrapped = function(...)
+                local isDefault = true
+                if type(callback) == "function" then
+                    local ok, value = pcall(callback, ...)
+                    if ok then
+                        isDefault = not not value
+                    end
+                end
+                if hideTooltips then
+                    return false
+                end
+                return isDefault
+            end
+            self.ahdrhIsDefaultWrapped = wrapped
+            self.isDefaultCallback = wrapped
+            self.ahdrhWrappingIsDefault = false
+        end)
+        NoteHook("clearUpdate", "SetIsDefaultCallback")
+    end
+    if button.isDefaultCallback ~= button.ahdrhIsDefaultWrapped then
+        local callback = button.isDefaultCallback
+        local wrapped = function(...)
+            local isDefault = true
+            if type(callback) == "function" then
+                local ok, value = pcall(callback, ...)
+                if ok then
+                    isDefault = not not value
+                end
+            end
+            if hideTooltips then
+                return false
+            end
+            return isDefault
+        end
+        button.ahdrhIsDefaultWrapped = wrapped
+        button.isDefaultCallback = wrapped
+        NoteHook("clearUpdate", "isDefaultCallback")
+    end
+end
+
+local function AddOurCheckbox(original, owner)
+    local element = original(owner, HIDE_TOOLTIPS_LABEL, function()
+        return hideTooltips and true or false
+    end, function(newSelected)
+        if type(newSelected) == "boolean" then
+            SetHideTooltips(newSelected)
+        else
+            SetHideTooltips(not hideTooltips)
+        end
     end)
+    if type(element) == "table" then
+        element.ahdrhHideTooltips = true
+        SetEntryTooltip(element)
+    end
+    filterMenuDebug.insertions = (filterMenuDebug.insertions or 0) + 1
+    filterMenuDebug.injected = true
+    return element
 end
 
 local function WrapGenerator(generator, via)
     return function(dropdown, rootDescription, ...)
-        if type(generator) == "function" then
-            local genOk, err = pcall(generator, dropdown, rootDescription, ...)
-            if not genOk then
-                filterMenuDebug.error = tostring(err)
+        filterMenuDebug.insertions = 0
+        filterMenuDebug.placed = "not-seen"
+        filterMenuDebug.method = via
+        local restore = {}
+        local buildCount = 0
+        local function wrapDescription(desc)
+            if type(desc) ~= "table" or desc.ahdrhCreateWrapped or type(desc.CreateCheckbox) ~= "function" then
+                return
+            end
+            desc.ahdrhCreateWrapped = true
+            local original = desc.CreateCheckbox
+            restore[#restore + 1] = function()
+                desc.CreateCheckbox = original
+                desc.ahdrhCreateWrapped = nil
+            end
+            local prevUncollected = false
+            desc.CreateCheckbox = function(self, text, isSelected, setSelected, data)
+                local element = original(self, text, isSelected, setSelected, data)
+                wrapDescription(element)
+                if buildCount == 0 and type(text) == "string" and text ~= HIDE_TOOLTIPS_LABEL then
+                    if IsUsableLabel(text) or prevUncollected then
+                        buildCount = 1
+                        AddOurCheckbox(original, self)
+                        filterMenuDebug.placed = "after-usable"
+                    end
+                end
+                prevUncollected = IsUncollectedLabel(text)
+                return element
             end
         end
-        local insOk, insErr = pcall(InsertHideTooltipsEntry, rootDescription)
-        if not insOk then
-            filterMenuDebug.error = tostring(insErr)
+        wrapDescription(rootDescription)
+        local genOk, err = pcall(generator, dropdown, rootDescription, ...)
+        for i = 1, #restore do
+            restore[i]()
         end
-        filterMenuDebug.method = via
-        if filterMenuDebug.tag then
-            RegisterModifyTag(filterMenuDebug.tag)
+        if not genOk then
+            filterMenuDebug.error = tostring(err)
         end
+        if buildCount == 0 and type(rootDescription) == "table" and type(rootDescription.CreateCheckbox) == "function" then
+            local ok, appendErr = pcall(AddOurCheckbox, rootDescription.CreateCheckbox, rootDescription)
+            if ok then
+                filterMenuDebug.placed = "appended"
+            else
+                filterMenuDebug.error = tostring(appendErr)
+            end
+        end
+        RememberTag(rootDescription)
     end
 end
 
 local function StoreWrappedGenerator(button, wrapped)
+    button.menuGenerator = wrapped
     if type(button.SetMenuGenerator) == "function" then
         local ok = pcall(button.SetMenuGenerator, button, wrapped)
         if ok then
             return "SetMenuGenerator"
         end
     end
-    button.menuGenerator = wrapped
     return "menuGenerator"
+end
+
+local function ApplyMenuWrap(button, generator, via)
+    if menuWrapping or type(generator) ~= "function" then
+        return
+    end
+    if generator == button.ahdrhWrappedGenerator then
+        return
+    end
+    if button.ahdrhWrappedGenerator and button.menuGenerator == button.ahdrhWrappedGenerator and generator == button.ahdrhOriginalGenerator then
+        return
+    end
+    menuWrapping = true
+    button.ahdrhOriginalGenerator = generator
+    local wrapped = WrapGenerator(generator, via)
+    button.ahdrhWrappedGenerator = wrapped
+    local stored = StoreWrappedGenerator(button, wrapped)
+    button.ahdrhMenuWrapped = true
+    filterMenuDebug.method = via .. "->" .. stored
+    menuWrapping = false
 end
 
 local function EnsureAddButtonHook()
@@ -806,6 +1098,7 @@ local function EnsureAddButtonHook()
         end
         pcall(UIDropDownMenu_AddButton, our, level)
         filterMenuDebug.injected = true
+        filterMenuDebug.insertions = 1
         filterMenuDebug.method = "UIDropDownMenu"
         filterMenuDebug.placed = "after-usable"
         filterMenuDebug.tooltip = "dropdown-tooltipTitle"
@@ -822,53 +1115,30 @@ local function InstallFilterMenu(ahFrame)
     end
     filterMenuDebug.hasSetupMenu = type(button.SetupMenu) == "function"
     filterMenuDebug.hasGenerator = type(button.menuGenerator) == "function"
+    pcall(InstallClearButtonHooks, ahFrame)
 
-    local tag = button.menuTag or button.tag
-    if type(tag) == "string" then
-        RegisterModifyTag(tag)
-        filterMenuDebug.tag = tag
-        if filterMenuDebug.method == "not-installed" then
-            filterMenuDebug.method = "tag-only"
-        end
-    end
-
-    if not button.ahdrhMenuWrapped and (filterMenuDebug.hasSetupMenu or filterMenuDebug.hasGenerator) then
-        local function apply(generator, via)
-            if menuWrapping or button.ahdrhMenuWrapped or type(generator) ~= "function" then
-                return
-            end
-            menuWrapping = true
-            local wrapped = WrapGenerator(generator, via)
-            local stored = StoreWrappedGenerator(button, wrapped)
-            button.ahdrhMenuWrapped = true
-            filterMenuDebug.method = via .. "->" .. stored
-            menuWrapping = false
-        end
-        if filterMenuDebug.hasGenerator then
-            apply(button.menuGenerator, "existing-generator")
+    if filterMenuDebug.hasSetupMenu or filterMenuDebug.hasGenerator then
+        if type(button.menuGenerator) == "function" then
+            ApplyMenuWrap(button, button.menuGenerator, "CreateCheckbox-wrap")
         end
         if type(hooksecurefunc) == "function" and filterMenuDebug.hasSetupMenu and not button.ahdrhSetupHooked then
             button.ahdrhSetupHooked = true
             hooksecurefunc(button, "SetupMenu", function(self, generator)
-                if menuWrapping or self.ahdrhMenuWrapped then
-                    return
-                end
-                apply(generator, "SetupMenu-hook")
+                ApplyMenuWrap(self, generator, "CreateCheckbox-wrap")
             end)
         end
-    end
-
-    if not button.ahdrhMenuWrapped and not filterMenuDebug.hasSetupMenu and type(button.initialize) == "function" and not button.ahdrhLegacy then
+    elseif type(button.initialize) == "function" and not button.ahdrhLegacy then
         EnsureAddButtonHook()
         local original = button.initialize
         button.initialize = function(self, level, menuList)
             legacyDepth = legacyDepth + 1
+            filterMenuDebug.insertions = 0
             local ok, err = pcall(original, self, level, menuList)
             legacyDepth = legacyDepth - 1
             if not ok then
                 filterMenuDebug.error = tostring(err)
             end
-            if not filterMenuDebug.injected and type(UIDropDownMenu_CreateInfo) == "function" and type(UIDropDownMenu_AddButton) == "function" then
+            if filterMenuDebug.insertions == 0 and type(UIDropDownMenu_CreateInfo) == "function" and type(UIDropDownMenu_AddButton) == "function" then
                 legacyInserting = true
                 local our = UIDropDownMenu_CreateInfo()
                 our.text = HIDE_TOOLTIPS_LABEL
@@ -888,18 +1158,19 @@ local function InstallFilterMenu(ahFrame)
                 end
                 pcall(UIDropDownMenu_AddButton, our, level)
                 filterMenuDebug.injected = true
+                filterMenuDebug.insertions = 1
                 filterMenuDebug.method = "UIDropDownMenu-append"
                 filterMenuDebug.placed = "appended"
                 legacyInserting = false
             end
         end
         button.ahdrhLegacy = true
-        if filterMenuDebug.method == "not-installed" or filterMenuDebug.method == "tag-only" then
+        if filterMenuDebug.method == "not-installed" then
             filterMenuDebug.method = "UIDropDownMenu-wrapped"
         end
     end
 
-    return button.ahdrhMenuWrapped or button.ahdrhLegacy or filterMenuDebug.tag ~= nil
+    return button.ahdrhMenuWrapped or button.ahdrhLegacy or filterMenuDebug.clearClick ~= "none"
 end
 
 local function AttachAuctionHouse(ahFrame)
@@ -2220,7 +2491,15 @@ local function ShowSettingsRowTip(owner, title, description, warningTail)
             GameTooltip:AddLine(description, 1, 1, 1, true)
         end
         if type(warningTail) == "string" and warningTail ~= "" then
-            GameTooltip:AddLine("|cffff8040Warning!|r" .. warningTail, 1, 1, 1, true)
+            GameTooltip:AddLine(" ")
+            local warningWord = "|cffffd100Warning!|r"
+            if type(NORMAL_FONT_COLOR) == "table" and type(NORMAL_FONT_COLOR.WrapTextInColorCode) == "function" then
+                local colorOk, colored = pcall(NORMAL_FONT_COLOR.WrapTextInColorCode, NORMAL_FONT_COLOR, "Warning!")
+                if colorOk and type(colored) == "string" and colored ~= "" then
+                    warningWord = colored
+                end
+            end
+            GameTooltip:AddLine(warningWord .. warningTail, 1, 1, 1, true)
         end
         GameTooltip:Show()
     end
@@ -2548,14 +2827,15 @@ local function PrintLayoutDebug()
     end
     print("AH Dressing Room Helper debug " .. ADDON_VERSION .. " (toc " .. tostring(meta) .. ")")
     print(string.format(
-        "filterMenu injected=%s method=%s tag=%s placed=%s tooltip=%s generator=%s setupMenu=%s error=%s checked=%s",
+        "filterMenu injected=%s method=%s tag=%s placed=%s insertions=%s tooltip=%s clearClick=%s clearUpdate=%s error=%s checked=%s",
         tostring(filterMenuDebug.injected),
         tostring(filterMenuDebug.method),
         tostring(filterMenuDebug.tag),
         tostring(filterMenuDebug.placed),
+        tostring(filterMenuDebug.insertions),
         tostring(filterMenuDebug.tooltip),
-        tostring(filterMenuDebug.hasGenerator),
-        tostring(filterMenuDebug.hasSetupMenu),
+        tostring(filterMenuDebug.clearClick),
+        tostring(filterMenuDebug.clearUpdate),
         tostring(filterMenuDebug.error),
         tostring(hideTooltips)
     ))

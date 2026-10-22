@@ -118,7 +118,7 @@ The hooks are filters, not replacements. `hooksecurefunc` runs after Blizzard's 
 
 An invisible tooltip would still block clicks on the preview, so the frames are actually hidden, not faded out.
 
-The options entry uses `Settings.RegisterCanvasLayoutCategory` with a custom panel frame, then `Settings.RegisterAddOnCategory`. Canvas layout replaces the scrollable settings list for this category, which hides Blizzard's header **Defaults** button (the one that can reset all game UI settings). The add-on draws its own **Defaults** control on the panel; it opens a `StaticPopup` that only resets `AHDressingRoomHelperDB` keys (`closeDressingRoom` and `dimUnsellable` to false) and refreshes the checkboxes. The list name is still **AH Dressing Room Helper**. `/ahdrh` calls `Settings.OpenToCategory` on that category. Both sections use the same left edge. Headers use `GameFontNormal`. Option labels use `GameFontHighlight`. Each checkbox's click writes its key through the same helper, and the panel refresh reads those keys back. Tooltips anchor on the checkbox (`ANCHOR_RIGHT`), with a gold title (`NORMAL_FONT_COLOR`), a white wrapped description, and for dim only an orange **Warning!** plus white warning text on the next wrapped line.
+The options entry uses `Settings.RegisterCanvasLayoutCategory` with a custom panel frame, then `Settings.RegisterAddOnCategory`. Canvas layout replaces the scrollable settings list for this category, which hides Blizzard's header **Defaults** button (the one that can reset all game UI settings). The add-on draws its own **Defaults** control on the panel; it opens a `StaticPopup` that only resets `AHDressingRoomHelperDB` keys (`closeDressingRoom` and `dimUnsellable` to false) and refreshes the checkboxes. The list name is still **AH Dressing Room Helper**. `/ahdrh` calls `Settings.OpenToCategory` on that category. Both sections use the same left edge. Headers use `GameFontNormal`. Option labels use `GameFontHighlight`. Each checkbox's click writes its key through the same helper, and the panel refresh reads those keys back. Tooltips anchor on the checkbox (`ANCHOR_RIGHT`), with a gold title (`NORMAL_FONT_COLOR`) and a white wrapped description. The dim tooltip then adds a blank line and a warning paragraph whose **Warning!** word is the same gold, with the rest of the paragraph white.
 
 ## Manual test
 
@@ -167,6 +167,11 @@ Run this in game. This project cannot launch the client.
 
 24. **Filter menu.** Browse has no floating **Hide tooltips** checkbox. **Filter** lists it under **Usable Only**. Checking it does not change the search text, the level range, Usable Only, or the rarity dots, and it does not start a search. Sell and Auctions keep the same checked state. Closing the auction house clears it.
 25. **`/ahdrh debug`** prints the add-on version, whether the Filter entry was injected, the method and menu tag, and for each settings checkbox whether that check and its label hit frame have mouse enabled and an OnEnter script.
+
+### v1.7.1
+
+26. **Dim tooltip.** Gold title, white description, a blank line, then gold **Warning!** and white wrapped text.
+27. **One Filter row, under Usable Only.** **Hide tooltips** is listed once, above **Rarity**. Checking it shows the red X on **Filter** and does not run a search. The X unchecks it. Closing the auction house clears it. `/ahdrh debug` reports `insertions=1`, `placed=after-usable`, and the clear-button hooks.
 
 ## Forever guide checklist
 
