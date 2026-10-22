@@ -602,13 +602,29 @@ local function SearchBoxWidth(box)
     return nil
 end
 
+-- Only SearchBox:SetWidth is changed for layout. Child controls (clear X,
+-- edit text, autocomplete) stay on Blizzard anchors inside the box; the
+-- clear button is anchored to the box's RIGHT and moves with a narrower width.
+-- Filter, Search, and favorites buttons are not re-anchored.
+local function SafeSetSearchBoxWidth(box, width)
+    if not box or not box.SetWidth or type(width) ~= "number" or width <= 0 then
+        return false
+    end
+    if type(InCombatLockdown) == "function" and InCombatLockdown()
+        and box.IsProtected and box:IsProtected() then
+        return false
+    end
+    box:SetWidth(width)
+    return true
+end
+
 local function RestoreSearchBoxWidth(bar)
     if not bar or not bar.SearchBox then
         return
     end
     local base = bar.ahdrhSearchWidthBaseline
-    if type(base) == "number" and bar.SearchBox.SetWidth then
-        bar.SearchBox:SetWidth(base)
+    if type(base) == "number" then
+        SafeSetSearchBoxWidth(bar.SearchBox, base)
     end
 end
 
@@ -626,8 +642,8 @@ local function PlaceCenteredInSearchGap(bar)
         if base then
             bar.ahdrhSearchWidthBaseline = base
         end
-    elseif bar.ahdrhSearchWidthBaseline and box.SetWidth then
-        box:SetWidth(bar.ahdrhSearchWidthBaseline)
+    elseif bar.ahdrhSearchWidthBaseline then
+        SafeSetSearchBoxWidth(box, bar.ahdrhSearchWidthBaseline)
     end
 
     holder:SetParent(bar)
@@ -665,7 +681,7 @@ local function PlaceCenteredInSearchGap(bar)
         if nextWidth >= current - 0.5 then
             break
         end
-        box:SetWidth(nextWidth)
+        SafeSetSearchBoxWidth(box, nextWidth)
     end
 
     local boxRight = box.GetRight and box:GetRight()
