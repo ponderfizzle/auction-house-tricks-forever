@@ -1,8 +1,8 @@
 ## Interface: 16001
 ## Title: Auction House Dressing Room Helper
-## Notes: Hide auction-house gear tooltips while you preview, and optionally close the Dressing Room with the auction house.
+## Notes: Hide auction-house gear tooltips while you preview, optionally close the Dressing Room with the auction house, and optionally dim bag items that cannot be posted.
 ## Author: AH Dressing Room Helper
-## Version: 1.2.0
+## Version: 1.3.0
 ## SavedVariables: AHDressingRoomHelperDB
 ## Category: Auction & Economy
 ## IconTexture: Interface\Icons\INV_Misc_Coin_01
