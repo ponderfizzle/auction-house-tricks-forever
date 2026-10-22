@@ -2,7 +2,7 @@
 ## Title: Auction House Dressing Room Helper
 ## Notes: Hide auction-house gear tooltips while you preview, optionally close the Dressing Room with the auction house, and optionally dim bag items that cannot be posted.
 ## Author: AH Dressing Room Helper
-## Version: 1.6.0
+## Version: 1.7.0
 ## SavedVariables: AHDressingRoomHelperDB
 ## Category: Auction & Economy
 ## IconTexture: Interface\Icons\INV_Misc_Coin_01

@@ -1,8 +1,8 @@
 # Auction House Dressing Room Helper
 
-A World of Warcraft: Forever add-on. While the auction house is open and **Hide tooltips** is checked, it hides the item tooltip under your cursor and the equipped-gear comparison tooltip (the one titled **Equipped**). That keeps the Dressing Room clear when you Ctrl-click gear in Browse Auctions.
+A World of Warcraft: Forever add-on. While the auction house is open and **Hide tooltips** is checked in the **Filter** menu, it hides the item tooltip under your cursor and the equipped-gear comparison tooltip (the one titled **Equipped**). That keeps the Dressing Room clear when you Ctrl-click gear in Browse Auctions.
 
-**Hide tooltips** is not saved. It starts unchecked, and it is cleared every time the auction house opens or closes.
+**Hide tooltips** is not saved. It starts unchecked, stays as you set it while you move between Buy, Sell, and Auctions, and it is cleared when the auction house closes.
 
 Two options are saved under Game Menu → Options → AddOns. Both default to off.
 
@@ -49,11 +49,11 @@ If a later dump is not `16001`, change the `## Interface:` line in both `AHDress
 ## Use
 
 1. Talk to an auctioneer and open **Browse Auctions**.
-2. **Hide tooltips** sits on the search row. On the Forever beta the category list's column headers start immediately under the search bar, so there is no empty Back row there. The control stays parented to `SearchBar` and is centered in the gap between the search box and **Filter**. After layout (on show and again on the next frame), the add-on measures `SearchBox:GetRight()` and `FilterButton:GetLeft()` in screen space, converts that gap into the bar's scale, and places the checkbox plus label with about 4px margin on each side. If the label would overlap **Filter**, the search box is narrowed with `SetWidth` (never below about 120px) and the control is centered again. Back, the count, the refresh button, and the results stay clear on panes that have them. If an item or commodity page shows the **Back** / "N Available" row, the control moves onto that row, just left of the count. Sell and Auctions hide the search bar, so the control sits at the bottom, just right of your money. Leaving Browse restores the search box width.
+2. Open **Filter** on Browse Auctions. **Hide tooltips** is a checkbox directly under **Usable Only**, above **Rarity**. The search box, favorites star, and Search button are unchanged. The entry is not drawn on the item page, the Back row, or the Sell/Auctions footer.
 3. Leave **Hide tooltips** unchecked for normal item tooltips and the **Equipped** comparison.
-4. Check it when you want the preview unobstructed. Hovering an auction item no longer shows that item's tooltip or the equipped-gear comparison. Ctrl-click still previews the item.
-5. Uncheck it and the filter stops at once. Move onto an item row if a tooltip does not reappear on its own. The cursor is on the checkbox when you click it, so the row's hover may not fire again until you move.
-6. Close the auction house. **Hide tooltips** is cleared. Open the auction house again and the box is unchecked.
+4. Check it when you want the preview unobstructed. Hovering an auction item no longer shows that item's tooltip or the equipped-gear comparison. Ctrl-click still previews the item. Switching to Sell or Auctions leaves the entry checked. It does not run a new search and it does not change Blizzard's filters.
+5. Uncheck it and the filter stops at once. Move onto an item row if a tooltip does not reappear on its own.
+6. Close the auction house. **Hide tooltips** is cleared. Open the auction house again and the Filter entry is unchecked.
 7. The saved options are separate. Open them with `/ahdrh` (or `/AHDRH`), or with Game Menu → **Options** → **AddOns** → **AH Dressing Room Helper**. Both start off. **Close Dressing Room with Auction House** is under **Dressing Room**. **Dim unsellable items when Sell tab selected** is under **Auction House**.
 
 Seller names, time-left text, the Search button, and the checkbox's own help tip are not item tooltips, so they still show while the box is checked. Bag slots are not part of the auction frame, so bag tooltips and their comparisons stay up too. The auction house opens your bags on its own. That is unchanged.
@@ -105,9 +105,11 @@ The dim setting is always enabled in Options and saves normally. There is no sup
 Hiding tooltips is decided at the moment a tooltip is shown, from both of these:
 
 - `AuctionHouseFrame:IsShown()`
-- the **Hide tooltips** checkbox is checked
+- **Hide tooltips** in the Filter menu is checked
 
-Closing the window makes `IsShown()` false, and `OnHide` / `AUCTION_HOUSE_CLOSED` also uncheck that box. Nothing in SavedVariables reloads a "hidden tooltips" state.
+Closing the window makes `IsShown()` false, and `OnHide` / `AUCTION_HOUSE_CLOSED` also clear **Hide tooltips**. Nothing in SavedVariables reloads that state. The search box is never resized or re-anchored.
+
+The Filter entry is added by wrapping `SearchBar.FilterButton`'s menu generator (`SetupMenu` / `menuGenerator`) and, when that menu has a tag, `Menu.ModifyMenu`. The checkbox is inserted after the **Usable Only** row. Its setter only flips the ephemeral flag. It does not call the auction house filter or browse APIs. A `UIDropDownMenu` fallback is used only when the button has no menu generator.
 
 The hooks are filters, not replacements. `hooksecurefunc` runs after Blizzard's function. When the gates are off, the hook returns without doing anything.
 
@@ -123,13 +125,13 @@ The options entry uses `Settings.RegisterCanvasLayoutCategory` with a custom pan
 Run this in game. This project cannot launch the client.
 
 1. Remove any old `AHTooltipHider` folder. Install `AHDressingRoomHelper`, restart, and enable **Auction House Dressing Room Helper**. Confirm `/dump select(4, GetBuildInfo())` is `16001`.
-2. Open the auction house on **Buy** / Browse. **Hide tooltips** is present and unchecked, centered between the search box and **Filter** (the checkbox and the words together). It stays in that gap. It does not cover the search box, Filter, or the results.
+2. Open the auction house on **Buy** / Browse. The search row has no **Hide tooltips** control, and the search box is Blizzard's normal width. Open **Filter**. **Hide tooltips** is unchecked, under **Usable Only** and above **Rarity**. Hover the entry if the menu shows help: gold title, then the white description.
 3. Hover a piece of armor. You should see the item tooltip and, when comparison is on, the **Equipped** tooltip.
 4. Check **Hide tooltips**. Hover another piece of gear. Neither tooltip should appear. Ctrl-click the row and confirm the Dressing Room model is not covered. The checkbox help should read: "Hides the gear comparison tooltips to prevent them from obscuring the Dressing Room preview.  Uncheck this setting to bring them back.  This setting clears when the auction house window closes."
 5. Hover a non-item control (the Search button, a category). Its normal text tooltip should still appear.
 6. Uncheck the box. Hover an item. Both tooltips should be back.
 7. Check the box, close the auction house, and hover gear in your bags and on the character sheet. Tooltips and comparisons must be normal.
-8. Reopen the auction house. **Hide tooltips** must be unchecked.
+8. Reopen the auction house. **Filter → Hide tooltips** must be unchecked. The search box anchors are untouched.
 9. With **Close Dressing Room with Auction House** off, Ctrl-click gear so the Dressing Room is open. Click the auction house's red X. The Dressing Room stays open. Reopen the auction house, open the Dressing Room again, and press Escape. Both close. That is the default Escape behavior, and the option is still off.
 10. `/ahdrh` opens Options on **AddOns → AH Dressing Room Helper**. Turn **Close Dressing Room with Auction House** on. Reopen the auction house, open the Dressing Room, and click the red X. The Dressing Room closes. Repeat, then walk out of range of the auctioneer. The Dressing Room closes again.
 11. `/reload`. The option is still on. **Hide tooltips** is unchecked the next time you open the auction house. Log out and back in. The option is still on.
@@ -159,8 +161,12 @@ Run this in game. This project cannot launch the client.
 ### v1.6
 
 22. **No bag gating.** `/ahdrh`. **Dim unsellable items when Sell tab selected** is always enabled (not gray). There is no gray note under the row and no supported/unsupported list in the tooltip. The setting saves and toggles dimming the same as v1.5.
-23. **RareScanner-style tooltips.** Hover each settings checkbox. Gold title (setting name), white wrapped body. Dim adds a second paragraph: orange **Warning!** then white text about bag add-on compatibility and `/reload`.
-24. **Browse placement.** On Browse, **Hide tooltips** does not overlap **Filter**. If your UI scale leaves a tight gap, the search box may be slightly narrower; reopening the auction house restores its width. Item detail and Back keep the control on the search row when the bar is visible.
+23. **RareScanner-style tooltips.** Hover each settings checkbox, including the words beside it. Gold title (setting name), white wrapped body. Dim adds a second paragraph: orange **Warning!** then white text about bag add-on compatibility and `/reload`.
+
+### v1.7
+
+24. **Filter menu.** Browse has no floating **Hide tooltips** checkbox. **Filter** lists it under **Usable Only**. Checking it does not change the search text, the level range, Usable Only, or the rarity dots, and it does not start a search. Sell and Auctions keep the same checked state. Closing the auction house clears it.
+25. **`/ahdrh debug`** prints the add-on version, whether the Filter entry was injected, the method and menu tag, and for each settings checkbox whether that check and its label hit frame have mouse enabled and an OnEnter script.
 
 ## Forever guide checklist
 
@@ -184,7 +190,7 @@ From the [addon development guide](https://wowforeverguides.com/addons/developer
 - Dimming itself. Default bags and Bagnon were checked against the public UI and BagBrother sources. The game client is not available here, so Sell-tab dimming and the optional bag adapters still need the manual test above.
 - The `_Camelot` TOC suffix. The interface number `16001` is confirmed on the current beta and can still change at launch.
 - That `TooltipComparisonManager` on your build still shows comparisons on `ShoppingTooltip1` and `ShoppingTooltip2`. That is what the current public Mainline UI source does. If a Forever build draws the **Equipped** tip on some other frame, the `Show` hooks on those two frames would miss it.
-- The centered gap on your UI scale. The control measures the search box and Filter after they have screen positions. A very narrow gap falls through to the footer beside the money display.
+- The Filter menu tag on your build. `/ahdrh debug` after opening **Filter** once reports the method and tag. If `placed` is `appended` instead of `after-usable`, the entry was added but the Usable Only label was not recognized.
 - That unchecking restores a tooltip without moving the mouse. `GetMouseFoci` is used to re-fire the row under the cursor. The cursor is usually on the checkbox itself, so expect to move back onto the row.
 
 ## Layout of the download

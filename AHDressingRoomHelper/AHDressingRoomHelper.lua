@@ -1,12 +1,12 @@
 -- Auction House Dressing Room Helper
 --
--- While the auction house is open and its "Hide tooltips" box is checked,
+-- While the auction house is open and Filter > Hide tooltips is checked,
 -- hide the item tooltip under the cursor and the equipped-gear comparison
 -- tooltips (ShoppingTooltip1/2, the ones titled "Equipped"). Unchecking the
--- box, or closing the auction house, restores normal tooltips immediately.
+-- entry, or closing the auction house, restores normal tooltips immediately.
 --
--- That checkbox is not saved. It is created unchecked and forced off every
--- time the auction house shows or hides.
+-- That entry is not saved. It starts unchecked and is forced off every time
+-- the auction house closes. It stays checked across Buy, Sell, and Auctions.
 --
 -- Two saved options live in AHDressingRoomHelperDB. Both default off.
 -- "Close Dressing Room with Auction House" also hides DressUpFrame when
@@ -16,15 +16,16 @@
 -- Forever uses the retail (Mainline) UI, not the Classic AuctionFrame.
 -- This file only talks to AuctionHouseFrame from Blizzard_AuctionHouseUI,
 -- which is load-on-demand. Hooks are filters: Blizzard's functions still
--- run, and the filter does nothing unless the window is open and the box
--- is checked at the moment a tooltip is shown.
+-- run, and the filter does nothing unless the window is open and Hide
+-- tooltips is checked at the moment a tooltip is shown.
 
 local addonName, ns = ...
 
 ns.name = addonName
+local ADDON_VERSION = "1.7.0"
 
 -- ---------------------------------------------------------------------------
--- State. The Hide tooltips box is not saved. The Dressing Room option is.
+-- State. Hide tooltips is not saved. The Dressing Room and dim options are.
 -- AHDressingRoomHelperDB is created in ADDON_LOADED, not here.
 -- ---------------------------------------------------------------------------
 
@@ -32,9 +33,7 @@ local DB_CLOSE_KEY = "closeDressingRoom"
 local DB_DIM_KEY = "dimUnsellable"
 local SETTINGS_CATEGORY_NAME = "AH Dressing Room Helper"
 
-local checkbox
-local holder
-local attached = false
+local hideTooltips = false
 local settingsCategory
 local settingsPanel
 local settingsCloseCheck
@@ -97,7 +96,7 @@ end
 -- DressUpFrame is only included while the auction house is open; see
 -- AuctionHouseIsOpen, which the callers check first.
 local function IsPreviewOwner(widget)
-    if not widget or widget == checkbox or widget == holder then
+    if not widget then
         return false
     end
     if IsUnder(widget, AuctionHouseFrame) then
@@ -119,7 +118,7 @@ end
 -- Read both gates every time. Do not cache "tooltips are hidden" in a flag
 -- that could stay true after the window closes.
 local function ShouldSuppress()
-    return AuctionHouseIsOpen() and checkbox and checkbox:GetChecked()
+    return AuctionHouseIsOpen() and hideTooltips
 end
 
 -- ---------------------------------------------------------------------------
@@ -331,8 +330,30 @@ local function InstallHooks()
 end
 
 -- ---------------------------------------------------------------------------
--- Checkbox
+-- Hide tooltips. Not saved. It lives in the Filter dropdown, under Usable
+-- Only, and is cleared whenever the auction house closes.
 -- ---------------------------------------------------------------------------
+
+local HIDE_TOOLTIPS_LABEL = "Hide tooltips"
+local HIDE_TOOLTIPS_HELP = "Hides the gear comparison tooltips to prevent them from obscuring the Dressing Room preview.  Uncheck this setting to bring them back.  This setting clears when the auction house window closes."
+
+local filterMenuDebug = {
+    injected = false,
+    method = "not-installed",
+    tag = nil,
+    placed = "not-yet",
+    tooltip = "not-set",
+    error = nil,
+    hasGenerator = false,
+    hasSetupMenu = false,
+}
+
+local registeredMenuTags = {}
+local legacyAddHooked = false
+local legacyDepth = 0
+local legacyInserting = false
+local menuWrapping = false
+local ahShowHooked = false
 
 local function PlayToggleSound(checked)
     if type(PlaySound) ~= "function" or type(SOUNDKIT) ~= "table" then
@@ -347,7 +368,7 @@ end
 local function FindUpdateTarget(widget)
     local current = widget
     for _ = 1, 15 do
-        if not current or current == checkbox or current == holder then
+        if not current then
             return nil
         end
         if current.UpdateTooltip and IsPreviewOwner(current) then
@@ -362,9 +383,6 @@ local function FindUpdateTarget(widget)
 end
 
 -- Unchecking only helps at once if the cursor is still over an item row.
--- Clicking the box moves the cursor onto the box, so this often no-ops and
--- the next hover shows the tooltip. That is still immediate: the filter is
--- already off.
 local function RestoreTooltipUnderCursor()
     if type(GetMouseFoci) ~= "function" then
         return
@@ -387,476 +405,545 @@ local function RestoreTooltipUnderCursor()
     end
 end
 
-local function ShowCheckboxTip(owner)
-    if not GameTooltip or not GameTooltip.SetOwner then
-        return
-    end
-    GameTooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT")
-    if GameTooltip.ClearLines then
-        GameTooltip:ClearLines()
-    end
-    GameTooltip:SetText("Hide tooltips", 1, 1, 1)
-    GameTooltip:AddLine("Hides the gear comparison tooltips to prevent them from obscuring the Dressing Room preview.  Uncheck this setting to bring them back.  This setting clears when the auction house window closes.", 0.9, 0.9, 0.9, true)
-    GameTooltip:Show()
-end
-
 local function ResetToggle()
-    if checkbox then
-        checkbox:SetChecked(false)
-    end
+    hideTooltips = false
 end
 
--- Gap kept between this control and the frame it sits beside.
-local ANCHOR_GAP = 8
-
--- GetStringWidth is 0 until the fontstring has been drawn at least once.
-local LABEL_WIDTH_FALLBACK = 96
-
--- How many times to remeasure after a show, once anchors have a real rect.
-local layoutRetries = 0
-
-local PlaceCheckbox
-
-local function RectsOverlap(a, b, pad)
-    if not a or not b or not a.GetLeft or not b.GetLeft then
-        return false
-    end
-    local al, ar, at, ab = a:GetLeft(), a:GetRight(), a:GetTop(), a:GetBottom()
-    local bl, br, bt, bb = b:GetLeft(), b:GetRight(), b:GetTop(), b:GetBottom()
-    if not (al and ar and at and ab and bl and br and bt and bb) then
-        return nil
-    end
-    pad = pad or 0
-    return (al - pad) < br and (ar + pad) > bl and (ab - pad) < bt and (at + pad) > bb
-end
-
-local function LabelWidth()
-    local textWidth = 0
-    if holder.Label and holder.Label.GetStringWidth then
-        textWidth = holder.Label:GetStringWidth() or 0
-    end
-    if textWidth >= 1 then
-        return textWidth, true
-    end
-    return LABEL_WIDTH_FALLBACK, false
-end
-
--- Box, then the words. Used on the results row and in the footer, where
--- there is horizontal room and the row is only about 22px tall.
-local function LayoutHorizontal(labelGap)
-    if not holder or not holder.Label or not holder.Check then
+local function SetHideTooltips(want)
+    if not AuctionHouseIsOpen() then
+        hideTooltips = false
         return
     end
-    if type(labelGap) ~= "number" then
-        labelGap = 4
-    end
-    local label = holder.Label
-    local button = holder.Check
-    button:ClearAllPoints()
-    button:SetPoint("LEFT", holder, "LEFT", 0, 0)
-    label:ClearAllPoints()
-    label:SetJustifyH("LEFT")
-    label:SetPoint("LEFT", button, "RIGHT", labelGap, 1)
-    local textWidth = LabelWidth()
-    holder:SetSize(24 + labelGap + textWidth, 24)
-    button:SetHitRectInsets(0, -(textWidth + labelGap + 4), -4, -4)
-end
-
--- Words above the box. The browse search row is a short gap between the
--- search box and Filter; a horizontal label often does not fit there, and
--- this keeps the same words in that gap without crossing either control.
-local function LayoutStacked()
-    if not holder or not holder.Label or not holder.Check then
+    want = want and true or false
+    if hideTooltips == want then
         return
     end
-    local label = holder.Label
-    local button = holder.Check
-    button:ClearAllPoints()
-    button:SetPoint("BOTTOM", holder, "BOTTOM", 0, 0)
-    label:ClearAllPoints()
-    label:SetJustifyH("CENTER")
-    label:SetPoint("BOTTOM", button, "TOP", 0, 0)
-    local textWidth, known = LabelWidth()
-    local textHeight = 12
-    if known and label.GetStringHeight then
-        local measured = label:GetStringHeight() or 0
-        if measured > 4 then
-            textHeight = measured
+    hideTooltips = want
+    if hideTooltips then
+        HidePreviewTooltipsNow()
+    else
+        RestoreTooltipUnderCursor()
+    end
+    PlayToggleSound(hideTooltips)
+end
+
+local function FrameTag(frame)
+    if not frame then
+        return "nil"
+    end
+    if frame.GetName then
+        local name = frame:GetName()
+        if type(name) == "string" and name ~= "" then
+            return name
         end
     end
-    local width = textWidth
-    if width < 24 then
-        width = 24
+    if frame.GetParentKey then
+        local key = frame:GetParentKey()
+        if type(key) == "string" and key ~= "" then
+            return key
+        end
     end
-    holder:SetSize(width, textHeight + 24)
-    local side = (width - 24) / 2
-    button:SetHitRectInsets(-(side + 4), -(side + 4), -(textHeight + 4), -4)
+    return "frame"
 end
 
-local function RaiseHolder(ahFrame)
-    local level = (ahFrame:GetFrameLevel() or 0) + 30
-    -- Buy/cancel dialogs use DialogOverlay at frame level 1000. Stay under it.
-    if level > 980 then
-        level = 980
-    end
-    holder:SetFrameLevel(level)
-    if holder.Check then
-        holder.Check:SetFrameLevel(level + 1)
-    end
-end
-
--- Padding on each side of the Hide tooltips control inside the search-to-Filter
--- gap. The search box may be narrowed, but not below SEARCH_BOX_MIN_WIDTH.
-local SEARCH_ROW_MARGIN = 4
-local SEARCH_BOX_MIN_WIDTH = 120
-
--- Category browse hides its refresh row (hideRefreshFrame) and has no Back
--- button. Column headers start just under the search bar, so the results
--- row from the retail mockup is the header row here. The clear spot on the
--- Forever beta is the gap between the search box and Filter.
-local function SearchIsBlocked(ahFrame)
-    if not holder:GetLeft() then
+local function PlainLower(value)
+    if type(value) ~= "string" or value == "" or IsSecret(value) then
         return nil
     end
-    local bar = ahFrame.SearchBar
-    if not bar then
+    return value:lower()
+end
+
+local function IsUsableLabel(text)
+    if type(text) ~= "string" then
         return false
     end
-    local obstacles = { bar.SearchBox, bar.FilterButton, bar.FavoritesSearchButton, bar.SearchButton }
-    for i = 1, #obstacles do
-        local hit = RectsOverlap(holder, obstacles[i], 1)
-        if hit == nil then
-            return nil
-        end
-        if hit then
-            return true
+    local globalText = _G.AUCTION_HOUSE_FILTER_USABLE_ONLY
+    if type(globalText) == "string" and text == globalText then
+        return true
+    end
+    local lower = PlainLower(text)
+    if not lower then
+        return false
+    end
+    if lower == "usable only" then
+        return true
+    end
+    return lower:find("usable only", 1, true) ~= nil
+end
+
+local function IsRarityLabel(text)
+    if type(text) ~= "string" then
+        return false
+    end
+    if type(_G.RARITY) == "string" and text == _G.RARITY then
+        return true
+    end
+    local lower = PlainLower(text)
+    return lower == "rarity" or (lower and lower:find("rarity", 1, true) ~= nil)
+end
+
+local function DescriptionText(element)
+    if type(element) ~= "table" then
+        return nil
+    end
+    local fields = { "text", "buttonText", "label", "title" }
+    for i = 1, #fields do
+        local value = element[fields[i]]
+        if type(value) == "string" and value ~= "" and not IsSecret(value) then
+            return value
         end
     end
+    if type(element.GetData) == "function" then
+        local ok, data = pcall(element.GetData, element)
+        if ok and type(data) == "string" and not IsSecret(data) then
+            return data
+        end
+        if ok and type(data) == "table" and type(data.text) == "string" then
+            return data.text
+        end
+    end
+    return nil
+end
 
+local function IsRadioElement(element)
+    if type(element) ~= "table" or element.ahdrhHideTooltips then
+        return false
+    end
+    if element.isRadio or element.radio then
+        return true
+    end
+    local kind = element.elementType or element.type or element.descriptionType
+    if type(kind) == "string" and kind:lower():find("radio", 1, true) then
+        return true
+    end
+    return false
+end
+
+local function ElementLists(root)
     local lists = {}
-    if IsShown(ahFrame.BrowseResultsFrame) and ahFrame.BrowseResultsFrame.ItemList then
-        lists[#lists + 1] = ahFrame.BrowseResultsFrame.ItemList
+    if type(root) ~= "table" then
+        return lists
     end
-    if IsShown(ahFrame.WoWTokenResults) then
-        lists[#lists + 1] = ahFrame.WoWTokenResults
-    end
-    for i = 1, #lists do
-        local hit = RectsOverlap(holder, lists[i], 1)
-        if hit == nil then
-            return nil
+    local fields = { "elements", "elementDescriptions", "queuedDescriptions", "children" }
+    for i = 1, #fields do
+        local list = root[fields[i]]
+        if type(list) == "table" then
+            local seen = false
+            for j = 1, #lists do
+                if lists[j] == list then
+                    seen = true
+                end
+            end
+            if not seen then
+                lists[#lists + 1] = list
+            end
         end
-        if hit then
+    end
+    return lists
+end
+
+local function ListHasEntry(list)
+    for i = 1, #list do
+        local element = list[i]
+        if type(element) == "table" and (element.ahdrhHideTooltips or DescriptionText(element) == HIDE_TOOLTIPS_LABEL) then
             return true
         end
     end
     return false
 end
 
--- Sell, Auctions, and a browse locale whose Filter label eats the search-row
--- gap. The coin display is 158px at the bottom left. To its right, under the
--- category list and the results, is empty frame padding.
-local function AnchorFooter(ahFrame)
-    holder:ClearAllPoints()
-    local money = ahFrame.MoneyFrameBorder
-    if money then
-        holder:SetPoint("LEFT", money, "RIGHT", 16, -2)
-    else
-        holder:SetPoint("BOTTOMLEFT", ahFrame, "BOTTOMLEFT", 190, 4)
-    end
-end
-
-local function ScheduleLayoutRetry(ahFrame)
-    if layoutRetries >= 2 then
-        return
-    end
-    if not (C_Timer and type(C_Timer.After) == "function") then
-        return
-    end
-    layoutRetries = layoutRetries + 1
-    C_Timer.After(0, function()
-        PlaceCheckbox(ahFrame)
-    end)
-end
-
--- GetLeft/GetRight are screen pixels. SetPoint offsets are in the holder's
--- own scale. Divide so a scaled auction frame still lands on the midpoint.
-local function ScreenGapToLocal(leftFrame, rightEdge, leftEdge)
-    local scale = 1
-    if leftFrame.GetEffectiveScale then
-        scale = leftFrame:GetEffectiveScale() or 1
-    end
-    if scale == 0 then
-        scale = 1
-    end
-    return (rightEdge - leftEdge) / scale
-end
-
-local function SearchBoxWidth(box)
-    if not box or not box.GetWidth then
-        return nil
-    end
-    local width = box:GetWidth()
-    if type(width) == "number" and width > 0 and not IsSecret(width) then
-        return width
-    end
-    return nil
-end
-
--- Only SearchBox:SetWidth is changed for layout. Child controls (clear X,
--- edit text, autocomplete) stay on Blizzard anchors inside the box; the
--- clear button is anchored to the box's RIGHT and moves with a narrower width.
--- Filter, Search, and favorites buttons are not re-anchored.
-local function SafeSetSearchBoxWidth(box, width)
-    if not box or not box.SetWidth or type(width) ~= "number" or width <= 0 then
-        return false
-    end
-    if type(InCombatLockdown) == "function" and InCombatLockdown()
-        and box.IsProtected and box:IsProtected() then
-        return false
-    end
-    box:SetWidth(width)
-    return true
-end
-
-local function RestoreSearchBoxWidth(bar)
-    if not bar or not bar.SearchBox then
-        return
-    end
-    local base = bar.ahdrhSearchWidthBaseline
-    if type(base) == "number" then
-        SafeSetSearchBoxWidth(bar.SearchBox, base)
-    end
-end
-
--- Center checkbox + label between SearchBox and Filter. Narrows the search box
--- when the measured gap is too small, then centers with side margins.
-local function PlaceCenteredInSearchGap(bar)
-    if not bar or not bar.SearchBox or not bar.FilterButton then
-        return nil
-    end
-    local box = bar.SearchBox
-    local filter = bar.FilterButton
-
-    if not bar.ahdrhSearchWidthBaseline then
-        local base = SearchBoxWidth(box)
-        if base then
-            bar.ahdrhSearchWidthBaseline = base
-        end
-    elseif bar.ahdrhSearchWidthBaseline then
-        SafeSetSearchBoxWidth(box, bar.ahdrhSearchWidthBaseline)
-    end
-
-    holder:SetParent(bar)
-    LayoutHorizontal(2)
-    local width = holder:GetWidth()
-    if not width or width < 1 then
-        return nil
-    end
-
-    local margin = SEARCH_ROW_MARGIN
-    local needed
-    local gap
-    for _ = 1, 4 do
-        local boxRight = box.GetRight and box:GetRight()
-        local filterLeft = filter.GetLeft and filter:GetLeft()
-        if not boxRight or not filterLeft then
-            return nil
-        end
-        gap = ScreenGapToLocal(holder, filterLeft, boxRight)
-        needed = width + margin * 2
-        if gap >= needed then
+local function MoveElement(list, element, index)
+    local from
+    for i = 1, #list do
+        if list[i] == element then
+            from = i
             break
         end
-        local deficit = needed - gap
-        local boxScale = box.GetEffectiveScale and box:GetEffectiveScale() or 1
-        if boxScale == 0 then
-            boxScale = 1
+    end
+    if not from then
+        if index < 1 then
+            index = 1
         end
-        local shrink = deficit / boxScale
-        local current = SearchBoxWidth(box) or bar.ahdrhSearchWidthBaseline or 200
-        local nextWidth = current - shrink
-        if nextWidth < SEARCH_BOX_MIN_WIDTH then
-            nextWidth = SEARCH_BOX_MIN_WIDTH
+        if index > #list + 1 then
+            index = #list + 1
         end
-        if nextWidth >= current - 0.5 then
-            break
-        end
-        SafeSetSearchBoxWidth(box, nextWidth)
-    end
-
-    local boxRight = box.GetRight and box:GetRight()
-    local filterLeft = filter.GetLeft and filter:GetLeft()
-    if not boxRight or not filterLeft then
-        return nil
-    end
-    gap = ScreenGapToLocal(holder, filterLeft, boxRight)
-    local offset = (gap - width) / 2
-    if offset < margin then
-        offset = margin
-    end
-    local maxOffset = gap - margin - width
-    if maxOffset < margin then
-        maxOffset = margin
-    end
-    if offset > maxOffset then
-        offset = maxOffset
-    end
-    if offset < 0 then
-        offset = 0
-    end
-    holder:ClearAllPoints()
-    holder:SetPoint("LEFT", box, "RIGHT", offset, 0)
-    return true
-end
-
-PlaceCheckbox = function(ahFrame)
-    if not holder or not ahFrame then
+        table.insert(list, index, element)
         return
     end
-    RaiseHolder(ahFrame)
+    if index > from then
+        index = index - 1
+    end
+    if index < 1 then
+        index = 1
+    end
+    if index > #list then
+        index = #list
+    end
+    if from == index then
+        return
+    end
+    table.remove(list, from)
+    table.insert(list, index, element)
+end
 
-    local bar = ahFrame.SearchBar
-    if IsShown(bar) and bar and bar.SearchBox and bar.FilterButton then
-        local ok = PlaceCenteredInSearchGap(bar)
-        if ok == nil then
-            if IsShown(ahFrame) then
-                ScheduleLayoutRetry(ahFrame)
+local function SetEntryTooltip(element)
+    if type(element) ~= "table" or type(element.SetTooltip) ~= "function" then
+        filterMenuDebug.tooltip = "no-SetTooltip"
+        return
+    end
+    local function paint(tooltip)
+        if not tooltip or type(tooltip.SetText) ~= "function" then
+            return
+        end
+        local r, g, b = 1, 0.82, 0
+        if type(NORMAL_FONT_COLOR) == "table" and type(NORMAL_FONT_COLOR.GetRGB) == "function" then
+            local ok, rr, gg, bb = pcall(NORMAL_FONT_COLOR.GetRGB, NORMAL_FONT_COLOR)
+            if ok and type(rr) == "number" and type(gg) == "number" and type(bb) == "number" then
+                r, g, b = rr, gg, bb
             end
-            return
         end
-        if ok then
-            layoutRetries = 0
-            return
+        local titled = false
+        if type(GameTooltip_SetTitle) == "function" then
+            titled = pcall(GameTooltip_SetTitle, tooltip, HIDE_TOOLTIPS_LABEL, NORMAL_FONT_COLOR, true)
+        end
+        if not titled then
+            tooltip:SetText(HIDE_TOOLTIPS_LABEL, r, g, b, 1)
+        end
+        if tooltip.AddLine then
+            tooltip:AddLine(HIDE_TOOLTIPS_HELP, 1, 1, 1, true)
         end
     end
-
-    if bar then
-        RestoreSearchBoxWidth(bar)
+    if pcall(element.SetTooltip, element, paint) then
+        filterMenuDebug.tooltip = "SetTooltip"
+        return
     end
-    holder:SetParent(ahFrame)
-    LayoutHorizontal()
-    AnchorFooter(ahFrame)
-    layoutRetries = 0
+    if pcall(element.SetTooltip, element, HIDE_TOOLTIPS_LABEL, HIDE_TOOLTIPS_HELP) then
+        filterMenuDebug.tooltip = "SetTooltip-text"
+        return
+    end
+    filterMenuDebug.tooltip = "SetTooltip-failed"
 end
 
-local function AttachCheckbox(ahFrame)
-    if attached or checkbox then
+local function RememberTag(root)
+    if type(root) ~= "table" then
         return
     end
-    if FrameIsLocked(ahFrame) then
-        attachQueued = true
+    local tag
+    if type(root.GetTag) == "function" then
+        local ok, value = pcall(root.GetTag, root)
+        if ok and type(value) == "string" and value ~= "" then
+            tag = value
+        end
+    end
+    if not tag and type(root.tag) == "string" and root.tag ~= "" then
+        tag = root.tag
+    end
+    if tag then
+        filterMenuDebug.tag = tag
+    end
+end
+
+local function InsertHideTooltipsEntry(root)
+    if type(root) ~= "table" or type(root.CreateCheckbox) ~= "function" then
+        filterMenuDebug.error = "no-CreateCheckbox"
         return
     end
-
-    -- One frame holds the box and the words so a single anchor moves both.
-    -- Parent stays the auction frame; the box is not a named global.
-    local holderFrame = CreateFrame("Frame", nil, ahFrame)
-    holderFrame:SetSize(24 + 4 + LABEL_WIDTH_FALLBACK, 24)
-    holder = holderFrame
-
-    local button = CreateFrame("CheckButton", nil, holderFrame, "UICheckButtonTemplate")
-    button:SetSize(24, 24)
-    button:SetChecked(false)
-    button:ClearAllPoints()
-    button:SetPoint("LEFT", holderFrame, "LEFT", 0, 0)
-    -- Remember it before the rest of the setup. A second call cannot create
-    -- another box if anything below errors on a future client.
-    checkbox = button
-    holderFrame.Check = button
-
-    -- The template ships its own font string. Hide it and draw the label to
-    -- the right of the box, in normal reading order.
-    if button.Text then
-        button.Text:SetText("")
-        button.Text:Hide()
-    end
-
-    local label = holderFrame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    label:SetJustifyH("LEFT")
-    label:SetText("Hide tooltips")
-    label:SetPoint("LEFT", button, "RIGHT", 4, 1)
-    holderFrame.Label = label
-    LayoutHorizontal()
-    PlaceCheckbox(ahFrame)
-
-    button:HookScript("OnShow", function()
-        PlaceCheckbox(ahFrame)
-    end)
-
-    button:SetScript("OnClick", function(self)
-        if not AuctionHouseIsOpen() then
-            self:SetChecked(false)
+    RememberTag(root)
+    local lists = ElementLists(root)
+    for i = 1, #lists do
+        if ListHasEntry(lists[i]) then
+            filterMenuDebug.injected = true
             return
         end
-        local checked = self:GetChecked() and true or false
-        if checked then
-            HidePreviewTooltipsNow()
-        else
-            RestoreTooltipUnderCursor()
-        end
-        PlayToggleSound(checked)
-    end)
-
-    button:SetScript("OnEnter", function(self)
-        ShowCheckboxTip(self)
-    end)
-    button:SetScript("OnLeave", function(self)
-        if GameTooltip and GameTooltip.GetOwner and GameTooltip:GetOwner() == self then
-            GameTooltip:Hide()
-        end
-    end)
-
-    attached = true
-    attachQueued = false
-
-    -- HookScript does not fire for a frame that is already on screen, so a
-    -- late attach (the UI is load-on-demand) resets the box itself.
-    if IsShown(ahFrame) then
-        ResetToggle()
     end
 
-    ahFrame:HookScript("OnShow", ResetToggle)
-    ahFrame:HookScript("OnShow", function()
-        PlaceCheckbox(ahFrame)
-        if C_Timer and type(C_Timer.After) == "function" then
-            C_Timer.After(0, function()
-                PlaceCheckbox(ahFrame)
+    local element
+    local ok, created = pcall(root.CreateCheckbox, root, HIDE_TOOLTIPS_LABEL, function()
+        return hideTooltips and true or false
+    end, function(newSelected)
+        if type(newSelected) == "boolean" then
+            SetHideTooltips(newSelected)
+        else
+            SetHideTooltips(not hideTooltips)
+        end
+    end)
+    if not ok then
+        filterMenuDebug.error = tostring(created)
+        return
+    end
+    element = created
+    if type(element) == "table" then
+        element.ahdrhHideTooltips = true
+        SetEntryTooltip(element)
+    end
+
+    lists = ElementLists(root)
+    local home
+    for L = 1, #lists do
+        for i = 1, #lists[L] do
+            if lists[L][i] == element then
+                home = lists[L]
+                break
+            end
+        end
+        if home then
+            break
+        end
+    end
+    local place = "appended"
+    if home then
+        local usableAt, rarityAt, radioAt
+        for i = 1, #home do
+            if home[i] ~= element then
+                local text = DescriptionText(home[i])
+                if not usableAt and IsUsableLabel(text) then
+                    usableAt = i
+                end
+                if not rarityAt and IsRarityLabel(text) then
+                    rarityAt = i
+                end
+                if not radioAt and IsRadioElement(home[i]) then
+                    radioAt = i
+                end
+            end
+        end
+        if usableAt then
+            MoveElement(home, element, usableAt + 1)
+            place = "after-usable"
+        elseif rarityAt then
+            MoveElement(home, element, rarityAt)
+            place = "before-rarity"
+        elseif radioAt then
+            MoveElement(home, element, radioAt)
+            place = "before-radios"
+        end
+    end
+    filterMenuDebug.injected = true
+    filterMenuDebug.placed = place
+end
+
+local function RegisterModifyTag(tag)
+    if type(tag) ~= "string" or tag == "" or registeredMenuTags[tag] then
+        return
+    end
+    if type(Menu) ~= "table" or type(Menu.ModifyMenu) ~= "function" then
+        return
+    end
+    registeredMenuTags[tag] = true
+    pcall(Menu.ModifyMenu, tag, function(_, rootDescription)
+        local callOk, err = pcall(InsertHideTooltipsEntry, rootDescription)
+        if not callOk then
+            filterMenuDebug.error = tostring(err)
+        end
+        if filterMenuDebug.method == "not-installed" or filterMenuDebug.method == "tag-only" then
+            filterMenuDebug.method = "Menu.ModifyMenu"
+        end
+        filterMenuDebug.tag = tag
+    end)
+end
+
+local function WrapGenerator(generator, via)
+    return function(dropdown, rootDescription, ...)
+        if type(generator) == "function" then
+            local genOk, err = pcall(generator, dropdown, rootDescription, ...)
+            if not genOk then
+                filterMenuDebug.error = tostring(err)
+            end
+        end
+        local insOk, insErr = pcall(InsertHideTooltipsEntry, rootDescription)
+        if not insOk then
+            filterMenuDebug.error = tostring(insErr)
+        end
+        filterMenuDebug.method = via
+        if filterMenuDebug.tag then
+            RegisterModifyTag(filterMenuDebug.tag)
+        end
+    end
+end
+
+local function StoreWrappedGenerator(button, wrapped)
+    if type(button.SetMenuGenerator) == "function" then
+        local ok = pcall(button.SetMenuGenerator, button, wrapped)
+        if ok then
+            return "SetMenuGenerator"
+        end
+    end
+    button.menuGenerator = wrapped
+    return "menuGenerator"
+end
+
+local function EnsureAddButtonHook()
+    if legacyAddHooked or type(hooksecurefunc) ~= "function" or type(UIDropDownMenu_AddButton) ~= "function" then
+        return
+    end
+    legacyAddHooked = true
+    hooksecurefunc("UIDropDownMenu_AddButton", function(info, level)
+        if legacyDepth <= 0 or legacyInserting then
+            return
+        end
+        if type(info) ~= "table" or info.ahdrhHideTooltips or not IsUsableLabel(info.text) then
+            return
+        end
+        if type(UIDropDownMenu_CreateInfo) ~= "function" then
+            return
+        end
+        legacyInserting = true
+        local our = UIDropDownMenu_CreateInfo()
+        our.text = HIDE_TOOLTIPS_LABEL
+        our.ahdrhHideTooltips = true
+        our.isNotRadio = true
+        our.keepShownOnClick = true
+        our.checked = hideTooltips
+        our.tooltipTitle = HIDE_TOOLTIPS_LABEL
+        our.tooltipText = HIDE_TOOLTIPS_HELP
+        our.tooltipOnButton = true
+        our.func = function(_, _, _, checked)
+            if type(checked) == "boolean" then
+                SetHideTooltips(checked)
+            else
+                SetHideTooltips(not hideTooltips)
+            end
+        end
+        pcall(UIDropDownMenu_AddButton, our, level)
+        filterMenuDebug.injected = true
+        filterMenuDebug.method = "UIDropDownMenu"
+        filterMenuDebug.placed = "after-usable"
+        filterMenuDebug.tooltip = "dropdown-tooltipTitle"
+        legacyInserting = false
+    end)
+end
+
+local function InstallFilterMenu(ahFrame)
+    local bar = ahFrame and ahFrame.SearchBar
+    local button = bar and bar.FilterButton or ahFrame.FilterButton
+    if not button then
+        filterMenuDebug.method = "no-filter-button"
+        return false
+    end
+    filterMenuDebug.hasSetupMenu = type(button.SetupMenu) == "function"
+    filterMenuDebug.hasGenerator = type(button.menuGenerator) == "function"
+
+    local tag = button.menuTag or button.tag
+    if type(tag) == "string" then
+        RegisterModifyTag(tag)
+        filterMenuDebug.tag = tag
+        if filterMenuDebug.method == "not-installed" then
+            filterMenuDebug.method = "tag-only"
+        end
+    end
+
+    if not button.ahdrhMenuWrapped and (filterMenuDebug.hasSetupMenu or filterMenuDebug.hasGenerator) then
+        local function apply(generator, via)
+            if menuWrapping or button.ahdrhMenuWrapped or type(generator) ~= "function" then
+                return
+            end
+            menuWrapping = true
+            local wrapped = WrapGenerator(generator, via)
+            local stored = StoreWrappedGenerator(button, wrapped)
+            button.ahdrhMenuWrapped = true
+            filterMenuDebug.method = via .. "->" .. stored
+            menuWrapping = false
+        end
+        if filterMenuDebug.hasGenerator then
+            apply(button.menuGenerator, "existing-generator")
+        end
+        if type(hooksecurefunc) == "function" and filterMenuDebug.hasSetupMenu and not button.ahdrhSetupHooked then
+            button.ahdrhSetupHooked = true
+            hooksecurefunc(button, "SetupMenu", function(self, generator)
+                if menuWrapping or self.ahdrhMenuWrapped then
+                    return
+                end
+                apply(generator, "SetupMenu-hook")
             end)
         end
-    end)
-    ahFrame:HookScript("OnHide", ResetToggle)
-    ahFrame:HookScript("OnHide", function()
-        CloseDressingRoomWithAuctionHouse()
-        if ahFrame.SearchBar then
-            RestoreSearchBoxWidth(ahFrame.SearchBar)
-        end
-        if RequestDimRefresh then
-            RequestDimRefresh()
-        end
-    end)
-
-    -- SetDisplayMode hides the old panes, then shows the new ones, then
-    -- returns. Repositioning from here sees the final view, so the box does
-    -- not flash through the browse spot on the way to an item. The same
-    -- moment is when Buy / Sell / Auctions has actually changed.
-    if type(hooksecurefunc) == "function" and type(ahFrame.SetDisplayMode) == "function" then
-        hooksecurefunc(ahFrame, "SetDisplayMode", function()
-            PlaceCheckbox(ahFrame)
-            if RequestDimRefresh then
-                RequestDimRefresh()
-            end
-        end)
     end
 
-    PlaceCheckbox(ahFrame)
+    if not button.ahdrhMenuWrapped and not filterMenuDebug.hasSetupMenu and type(button.initialize) == "function" and not button.ahdrhLegacy then
+        EnsureAddButtonHook()
+        local original = button.initialize
+        button.initialize = function(self, level, menuList)
+            legacyDepth = legacyDepth + 1
+            local ok, err = pcall(original, self, level, menuList)
+            legacyDepth = legacyDepth - 1
+            if not ok then
+                filterMenuDebug.error = tostring(err)
+            end
+            if not filterMenuDebug.injected and type(UIDropDownMenu_CreateInfo) == "function" and type(UIDropDownMenu_AddButton) == "function" then
+                legacyInserting = true
+                local our = UIDropDownMenu_CreateInfo()
+                our.text = HIDE_TOOLTIPS_LABEL
+                our.ahdrhHideTooltips = true
+                our.isNotRadio = true
+                our.keepShownOnClick = true
+                our.checked = hideTooltips
+                our.tooltipTitle = HIDE_TOOLTIPS_LABEL
+                our.tooltipText = HIDE_TOOLTIPS_HELP
+                our.tooltipOnButton = true
+                our.func = function(_, _, _, checked)
+                    if type(checked) == "boolean" then
+                        SetHideTooltips(checked)
+                    else
+                        SetHideTooltips(not hideTooltips)
+                    end
+                end
+                pcall(UIDropDownMenu_AddButton, our, level)
+                filterMenuDebug.injected = true
+                filterMenuDebug.method = "UIDropDownMenu-append"
+                filterMenuDebug.placed = "appended"
+                legacyInserting = false
+            end
+        end
+        button.ahdrhLegacy = true
+        if filterMenuDebug.method == "not-installed" or filterMenuDebug.method == "tag-only" then
+            filterMenuDebug.method = "UIDropDownMenu-wrapped"
+        end
+    end
+
+    return button.ahdrhMenuWrapped or button.ahdrhLegacy or filterMenuDebug.tag ~= nil
+end
+
+local function AttachAuctionHouse(ahFrame)
+    if not ahFrame then
+        return
+    end
+    if not ahShowHooked then
+        if FrameIsLocked(ahFrame) then
+            attachQueued = true
+            return
+        end
+        local hookOk = pcall(function()
+            ahFrame:HookScript("OnShow", ResetToggle)
+            ahFrame:HookScript("OnHide", function()
+                ResetToggle()
+                CloseDressingRoomWithAuctionHouse()
+                if RequestDimRefresh then
+                    RequestDimRefresh()
+                end
+            end)
+            if type(hooksecurefunc) == "function" and type(ahFrame.SetDisplayMode) == "function" then
+                hooksecurefunc(ahFrame, "SetDisplayMode", function()
+                    if RequestDimRefresh then
+                        RequestDimRefresh()
+                    end
+                end)
+            end
+        end)
+        if hookOk then
+            ahShowHooked = true
+            attachQueued = false
+            if IsShown(ahFrame) then
+                ResetToggle()
+            end
+        end
+    end
+    pcall(InstallFilterMenu, ahFrame)
 end
 
 local function TryAttach()
     InstallHooks()
-    if not AuctionHouseFrame then
-        return
+    if AuctionHouseFrame then
+        AttachAuctionHouse(AuctionHouseFrame)
     end
-    AttachCheckbox(AuctionHouseFrame)
 end
 
 local function TryAttachSoon()
@@ -2097,39 +2184,54 @@ local function EnsureSettingsResetPopup()
     }
 end
 
-local function OrangeWarningPrefix()
-    local hex = "ffff8040"
-    if ORANGE_FONT_COLOR then
-        if ORANGE_FONT_COLOR.GenerateHexColor then
-            hex = ORANGE_FONT_COLOR:GenerateHexColor()
-        elseif ORANGE_FONT_COLOR.GetRGB then
-            local r, g, b = ORANGE_FONT_COLOR:GetRGB()
-            hex = string.format("ff%02x%02x%02x", r * 255, g * 255, b * 255)
+local function TitleColorRGB()
+    local r, g, b = 1, 0.82, 0
+    if type(NORMAL_FONT_COLOR) == "table" and type(NORMAL_FONT_COLOR.GetRGB) == "function" then
+        local ok, rr, gg, bb = pcall(NORMAL_FONT_COLOR.GetRGB, NORMAL_FONT_COLOR)
+        if ok and type(rr) == "number" and type(gg) == "number" and type(bb) == "number" then
+            r, g, b = rr, gg, bb
         end
     end
-    if type(WrapTextInColorCode) == "function" then
-        return WrapTextInColorCode("Warning!", hex)
-    end
-    return "|c" .. hex .. "Warning!|r"
+    return r, g, b
 end
 
+-- SetText's 5th argument is text alpha (a number), not wrap. Passing true
+-- there does not raise a script error on this client; the line is drawn with
+-- alpha 0, so the tooltip looks missing. AddLine's 5th argument is wrap.
 local function ShowSettingsRowTip(owner, title, description, warningTail)
     if not GameTooltip or not owner then
         return
     end
-    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
-    local tr, tg, tb = 1, 0.82, 0
-    if NORMAL_FONT_COLOR and NORMAL_FONT_COLOR.GetRGB then
-        tr, tg, tb = NORMAL_FONT_COLOR:GetRGB()
+    local function show()
+        GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+        if GameTooltip.SetAlpha then
+            GameTooltip:SetAlpha(1)
+        end
+        local r, g, b = TitleColorRGB()
+        local titled = false
+        if type(GameTooltip_SetTitle) == "function" then
+            local color = (type(NORMAL_FONT_COLOR) == "table") and NORMAL_FONT_COLOR or nil
+            titled = pcall(GameTooltip_SetTitle, GameTooltip, title or "", color, true)
+        end
+        if not titled then
+            GameTooltip:SetText(title or "", r, g, b, 1)
+        end
+        if type(description) == "string" and description ~= "" then
+            GameTooltip:AddLine(description, 1, 1, 1, true)
+        end
+        if type(warningTail) == "string" and warningTail ~= "" then
+            GameTooltip:AddLine("|cffff8040Warning!|r" .. warningTail, 1, 1, 1, true)
+        end
+        GameTooltip:Show()
     end
-    GameTooltip:SetText(title, tr, tg, tb, true)
-    if type(description) == "string" and description ~= "" then
-        GameTooltip:AddLine(description, 1, 1, 1, true)
+    if pcall(show) then
+        return
     end
-    if type(warningTail) == "string" and warningTail ~= "" then
-        GameTooltip:AddLine(OrangeWarningPrefix() .. warningTail, 1, 1, 1, true)
-    end
-    GameTooltip:Show()
+    pcall(function()
+        GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+        GameTooltip:SetText(title or "", 1, 0.82, 0, 1)
+        GameTooltip:Show()
+    end)
 end
 
 local function WriteSavedOption(key, checked)
@@ -2172,14 +2274,50 @@ local function CreateSettingsCheckboxRow(parent, anchorTo, yOffset, labelText, t
         end
         return tooltipBody
     end
-    check:SetScript("OnEnter", function(self)
-        ShowSettingsRowTip(self, tooltipTitle, tipBody(), tooltipWarning)
-    end)
-    check:SetScript("OnLeave", function()
+
+    -- The option words are a FontString, which never receives mouse. A button
+    -- beside the checkbox covers that text. The checkbox itself also gets
+    -- OnEnter, and its hit rect is stretched over the words so either target
+    -- opens the tip. Both scripts are reapplied from OnRefresh.
+    local labelHit = CreateFrame("Button", nil, row)
+    labelHit:SetPoint("TOPLEFT", check, "TOPRIGHT", 2, 6)
+    labelHit:SetPoint("BOTTOMLEFT", check, "BOTTOMRIGHT", 2, -6)
+    labelHit:SetWidth(32)
+    check.ahdrhLabelHit = labelHit
+
+    local function hideTip()
         if GameTooltip and GameTooltip.GetOwner and GameTooltip:GetOwner() == check then
             GameTooltip:Hide()
         end
-    end)
+    end
+    local function showTip()
+        ShowSettingsRowTip(check, tooltipTitle, tipBody(), tooltipWarning)
+    end
+    local function bindTipScripts()
+        check:EnableMouse(true)
+        check:SetScript("OnEnter", showTip)
+        check:SetScript("OnLeave", hideTip)
+        labelHit:EnableMouse(true)
+        labelHit:SetScript("OnEnter", showTip)
+        labelHit:SetScript("OnLeave", hideTip)
+        labelHit:SetScript("OnClick", function()
+            check:Click()
+        end)
+        local level = check:GetFrameLevel() or 1
+        labelHit:SetFrameLevel(level + 2)
+        local textW = 0
+        if label.GetStringWidth then
+            textW = label:GetStringWidth() or 0
+        end
+        if type(textW) ~= "number" or textW < 8 then
+            textW = 180
+        end
+        labelHit:SetWidth(textW + 8)
+        check:SetHitRectInsets(0, -(textW + 16), -6, -6)
+        check.ahdrhTipBound = true
+    end
+    check.ahdrhRebindTip = bindTipScripts
+    bindTipScripts()
 
     check:SetScript("OnClick", function(self)
         if self.ahdrhLocked then
@@ -2273,6 +2411,9 @@ local function BuildSettingsPanel()
             if settingsCloseCheck.label then
                 settingsCloseCheck.label:SetFontObject("GameFontHighlight")
             end
+            if settingsCloseCheck.ahdrhRebindTip then
+                settingsCloseCheck.ahdrhRebindTip()
+            end
         end
         if settingsDimCheck then
             local dimOn = AHDressingRoomHelperDB[DB_DIM_KEY] == true
@@ -2282,6 +2423,9 @@ local function BuildSettingsPanel()
             settingsDimCheck:Enable()
             if settingsDimCheck.label then
                 settingsDimCheck.label:SetFontObject("GameFontHighlight")
+            end
+            if settingsDimCheck.ahdrhRebindTip then
+                settingsDimCheck.ahdrhRebindTip()
             end
         end
     end
@@ -2367,11 +2511,72 @@ local function OpenSettings()
     return true
 end
 
+local function TipTargetLine(check, which)
+    if not check then
+        return which .. ": missing"
+    end
+    local function flag(frame, label)
+        if not frame then
+            return label .. " missing"
+        end
+        local mouse = "?"
+        if frame.IsMouseEnabled then
+            mouse = frame:IsMouseEnabled() and "mouse-on" or "mouse-off"
+        end
+        local script = "OnEnter-missing"
+        if frame.GetScript and frame:GetScript("OnEnter") then
+            script = "OnEnter-set"
+        end
+        local name = FrameTag(frame)
+        return label .. "=" .. name .. " " .. mouse .. " " .. script
+    end
+    return which .. ": " .. flag(check, "check") .. "; " .. flag(check.ahdrhLabelHit, "labelHit")
+end
+
+local function PrintLayoutDebug()
+    local meta = nil
+    if C_AddOns and type(C_AddOns.GetAddOnMetadata) == "function" then
+        local ok, value = pcall(C_AddOns.GetAddOnMetadata, addonName, "Version")
+        if ok then
+            meta = value
+        end
+    elseif type(GetAddOnMetadata) == "function" then
+        local ok, value = pcall(GetAddOnMetadata, addonName, "Version")
+        if ok then
+            meta = value
+        end
+    end
+    print("AH Dressing Room Helper debug " .. ADDON_VERSION .. " (toc " .. tostring(meta) .. ")")
+    print(string.format(
+        "filterMenu injected=%s method=%s tag=%s placed=%s tooltip=%s generator=%s setupMenu=%s error=%s checked=%s",
+        tostring(filterMenuDebug.injected),
+        tostring(filterMenuDebug.method),
+        tostring(filterMenuDebug.tag),
+        tostring(filterMenuDebug.placed),
+        tostring(filterMenuDebug.tooltip),
+        tostring(filterMenuDebug.hasGenerator),
+        tostring(filterMenuDebug.hasSetupMenu),
+        tostring(filterMenuDebug.error),
+        tostring(hideTooltips)
+    ))
+    print(TipTargetLine(settingsCloseCheck, "close"))
+    print(TipTargetLine(settingsDimCheck, "dim"))
+end
+
 -- WoW matches slash commands without regard to case. Both spellings are
--- registered so /ahdrh and /AHDRH open the same category.
+-- registered so /ahdrh and /AHDRH open the same category. "/ahdrh debug"
+-- prints the Filter-menu injection and the settings-tooltip owners.
 SLASH_AHDRESSINGROOMHELPER1 = "/ahdrh"
 SLASH_AHDRESSINGROOMHELPER2 = "/AHDRH"
-SlashCmdList.AHDRESSINGROOMHELPER = function()
+SlashCmdList.AHDRESSINGROOMHELPER = function(msg)
+    local text = ""
+    if type(msg) == "string" then
+        text = msg:lower():match("^%s*(.-)%s*$") or ""
+    end
+    if text == "debug" then
+        PrintLayoutDebug()
+        return
+    end
     if not OpenSettings() then
         print("AH Dressing Room Helper: open Game Menu, Options, AddOns, then AH Dressing Room Helper.")
     end
@@ -2408,9 +2613,9 @@ function eventFrame:AUCTION_HOUSE_SHOW()
     -- not installed yet). Later opens are reset by that hook. Resetting here
     -- on every show would clear the box if this event ever fired again
     -- while the window was already open.
-    local hadCheckbox = checkbox ~= nil
+    local hadHooks = ahShowHooked
     TryAttachSoon()
-    if not hadCheckbox then
+    if not hadHooks then
         ResetToggle()
     end
     if RequestDimRefresh then
