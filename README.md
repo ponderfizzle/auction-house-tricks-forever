@@ -124,14 +124,14 @@ The hooks are filters, not replacements. `hooksecurefunc` runs after Blizzard's 
 
 An invisible tooltip would still block clicks on the preview, so the frames are actually hidden, not faded out.
 
-The options entry uses `Settings.RegisterVerticalLayoutCategory`, `Settings.RegisterAddOnSetting`, and `Settings.CreateCheckbox`, then `Settings.RegisterAddOnCategory`. The list name is **AH Dressing Room Helper**. `/ahdrh` calls `Settings.OpenToCategory` on that category. The dim checkbox is grayed out with `AddModifyPredicate` while an unsupported bag add-on is loaded. That does not write the saved value.
+The options entry uses `Settings.RegisterCanvasLayoutCategory` with a custom panel frame, then `Settings.RegisterAddOnCategory`. Canvas layout replaces the scrollable settings list for this category, which hides Blizzard's header **Defaults** button (the one that can reset all game UI settings). The add-on draws its own **Defaults** control on the panel; it opens a `StaticPopup` that only resets `AHDressingRoomHelperDB` keys (`closeDressingRoom` and `dimUnsellable` to false) and refreshes the checkboxes. The list name is still **AH Dressing Room Helper**. `/ahdrh` calls `Settings.OpenToCategory` on that category. Each row is checkbox-left, full label text on the right. The dim row is disabled (not the saved value) while an unsupported bag add-on is loaded.
 
 ## Manual test
 
 Run this in game. This project cannot launch the client.
 
 1. Remove any old `AHTooltipHider` folder. Install `AHDressingRoomHelper`, restart, and enable **Auction House Dressing Room Helper**. Confirm `/dump select(4, GetBuildInfo())` is `16001`.
-2. Open the auction house. **Hide tooltips** is present and unchecked, centered between the search box and **Filter**, with the label above the box on the compact browse layout. It does not cover the search box, Filter, or the results.
+2. Open the auction house on **Buy** / Browse. **Hide tooltips** is present and unchecked. The checkbox and label together sit centered in the gap between the search box and **Filter** (or just left of the favorites star if that gap is too narrow). It does not cover the search box, Filter, or the results.
 3. Hover a piece of armor. You should see the item tooltip and, when comparison is on, the **Equipped** tooltip.
 4. Check **Hide tooltips**. Hover another piece of gear. Neither tooltip should appear. Ctrl-click the row and confirm the Dressing Room model is not covered. The checkbox help should read: "Hides the gear comparison tooltips to prevent them from obscuring the Dressing Room preview.  Uncheck this setting to bring them back.  This setting clears when the auction house window closes."
 5. Hover a non-item control (the Search button, a category). Its normal text tooltip should still appear.
@@ -162,6 +162,13 @@ Run this in game. This project cannot launch the client.
 ### Unsupported bag UI
 
 20. Enable one add-on from the unsupported list (Combuctor is enough). `/reload`. `/ahdrh`. **Dim unsellable items when Sell tab selected** is grayed out. Its tooltip names that add-on and lists the supported bag UIs. Open the Sell tab: nothing is dimmed. `/dump AHDressingRoomHelperDB.dimUnsellable` is unchanged from before this test. Disable that bag add-on, `/reload`, and the checkbox works again with the same saved value.
+
+### v1.4 UI fixes
+
+21. **Browse placement:** On Browse, the **Hide tooltips** control looks centered between the search box and **Filter** (not hugging the search box). If your layout is very tight, it may sit just left of the favorites star instead.
+22. **Stable position:** From Browse, open an item listing (Back button row visible). **Hide tooltips** stays in the same screen position as step 21; it does not jump down beside Back. Click **Back** and confirm it still matches.
+23. **Settings labels:** `/ahdrh`. Both saved options show their full names (no `...` truncation). Checkboxes line up in a column on the left; labels read to the right.
+24. **Safe Defaults:** Click **Defaults** on the add-on page. You should see only a confirm dialog for **AH Dressing Room Helper** with Confirm/Cancel (not Blizzard's "All Settings" / "These Settings" dialog). Confirm resets both saved options to off and leaves other game settings untouched.
 
 ## Forever guide checklist
 

@@ -36,6 +36,10 @@ local checkbox
 local holder
 local attached = false
 local settingsCategory
+local settingsPanel
+local settingsCloseCheck
+local settingsDimCheck
+local settingsDimNote
 local settingsRegistered = false
 local settingsFailed = false
 local closeDressingRoomQueued = false
@@ -499,61 +503,9 @@ local function RaiseHolder(ahFrame)
     end
 end
 
--- Gear results and commodity results both pull their "N Available" row
--- (ItemList.RefreshFrame, 200x20) up onto the Back button's row.
--- Gear uses refreshFrameYOffset 132; commodities uses 30. Either way the
--- row under the search bar, left of that frame, is empty: Back ends near
--- x=293 and the count frame starts near x=591 on the 800-wide window.
-local function ShownRefresh(frame)
-    if not IsShown(frame) or not frame.ItemList then
-        return nil
-    end
-    local refresh = frame.ItemList.RefreshFrame
-    if IsShown(refresh) then
-        return refresh
-    end
-    return nil
-end
-
-local function AnchorBeside(frame, relativeTo, gap)
-    frame:ClearAllPoints()
-    frame:SetPoint("RIGHT", relativeTo, "LEFT", -gap, 0)
-end
-
-local function DetailIsBlocked(ahFrame, refresh)
-    if not holder:GetLeft() then
-        return nil
-    end
-    local blocked = RectsOverlap(holder, refresh, 2)
-    if blocked == nil then
-        return nil
-    end
-    if blocked then
-        return true
-    end
-
-    local frames = {}
-    if IsShown(ahFrame.ItemBuyFrame) then
-        frames[#frames + 1] = ahFrame.ItemBuyFrame.BackButton
-        frames[#frames + 1] = ahFrame.ItemBuyFrame.ItemDisplay
-        frames[#frames + 1] = ahFrame.ItemBuyFrame.ItemList
-    end
-    if IsShown(ahFrame.CommoditiesBuyFrame) then
-        frames[#frames + 1] = ahFrame.CommoditiesBuyFrame.BackButton
-        frames[#frames + 1] = ahFrame.CommoditiesBuyFrame.BuyDisplay
-        frames[#frames + 1] = ahFrame.CommoditiesBuyFrame.ItemList
-    end
-    for i = 1, #frames do
-        local hit = RectsOverlap(holder, frames[i], 2)
-        if hit == nil then
-            return nil
-        end
-        if hit then
-            return true
-        end
-    end
-    return false
-end
+-- Minimum open space between the search box and Filter before the control
+-- moves left of the favorites star instead of sitting in the gap.
+local SEARCH_ROW_MIN_GAP = 8
 
 -- Category browse hides its refresh row (hideRefreshFrame) and has no Back
 -- button. Column headers start just under the search bar, so the results
@@ -636,54 +588,93 @@ local function ScreenGapToLocal(leftFrame, rightEdge, leftEdge)
     return (rightEdge - leftEdge) / scale
 end
 
--- Center the control in the open space between the search box and Filter.
--- Returns nil when those edges are not measurable yet.
-local function AnchorCenteredInSearchGap(bar)
-    local box = bar.SearchBox
-    local filter = bar.FilterButton
-    if not box or not filter or not box.GetRight or not filter.GetLeft then
+-- Center the holder in the gap between the search box and Filter. The left
+-- edge of the holder is offset from the search box's right edge by half of
+-- (gap - width), so the combined checkbox and label are centered, not just
+-- the checkbox. Returns "placed", "tight", or nil when edges are unknown.
+local function PlaceCenteredInSearchGap(bar, layout)
+    if not bar or not bar.SearchBox or not bar.FilterButton then
         return nil
     end
-    local boxRight = box:GetRight()
-    local filterLeft = filter:GetLeft()
+    holder:SetParent(bar)
+    layout()
+    local box = bar.SearchBox
+    local filter = bar.FilterButton
+    local boxRight = box.GetRight and box:GetRight()
+    local filterLeft = filter.GetLeft and filter:GetLeft()
     local width = holder:GetWidth()
     if not boxRight or not filterLeft or not width or width < 1 then
         return nil
     end
     local gap = ScreenGapToLocal(holder, filterLeft, boxRight)
-    local rightGap = (gap - width) / 2
+    if gap < width + SEARCH_ROW_MIN_GAP then
+        return "tight"
+    end
     holder:ClearAllPoints()
-    holder:SetPoint("RIGHT", filter, "LEFT", -rightGap, 0)
+    holder:SetPoint("LEFT", box, "RIGHT", (gap - width) / 2, 0)
+    return "placed"
+end
+
+-- When the search-to-Filter gap is too narrow, sit just left of the star.
+local function PlaceLeftOfFavorites(bar, layout)
+    local fav = bar and bar.FavoritesSearchButton
+    if not fav then
+        return false
+    end
+    holder:SetParent(bar)
+    layout()
+    holder:ClearAllPoints()
+    holder:SetPoint("RIGHT", fav, "LEFT", -8, 0)
     return true
 end
 
--- Item results: right edge 8px left of the count/refresh row, in line with Back.
--- Category browse on the Forever beta: column headers fill that row, so the
--- control sits in the search row. Its midpoint is halfway between the search
--- box's right edge and Filter's left edge. A line that would cross the search
--- box is stacked (words above the box) in that same gap. If that still
--- collides, the control moves to the footer beside the money display.
-local function TrySearchRow(ahFrame, layout)
-    local bar = ahFrame.SearchBar
-    if not (IsShown(bar) and bar.FilterButton) then
-        return false
+-- Browse and item detail both keep SearchBar visible. Parent to SearchBar and
+-- anchor from the search box / Filter geometry only, never from Back or the
+-- refresh row, so the control does not jump when a listing is opened.
+local function TryStableSearchPlacement(ahFrame, bar)
+    local state = PlaceCenteredInSearchGap(bar, LayoutHorizontal)
+    if state == nil then
+        return nil
     end
-    layout()
-    local centered = AnchorCenteredInSearchGap(bar)
-    if centered == nil then
-        AnchorBeside(holder, bar.FilterButton, ANCHOR_GAP)
-        if IsShown(ahFrame) then
-            ScheduleLayoutRetry(ahFrame)
+    if state == "placed" then
+        local blocked = SearchIsBlocked(ahFrame)
+        if blocked == nil then
+            return nil
         end
+        if not blocked then
+            return true
+        end
+    end
+
+    if PlaceLeftOfFavorites(bar, LayoutHorizontal) then
+        local blocked = SearchIsBlocked(ahFrame)
+        if blocked == nil then
+            return nil
+        end
+        if not blocked then
+            return true
+        end
+    end
+
+    state = PlaceCenteredInSearchGap(bar, LayoutStacked)
+    if state == "placed" then
+        local blocked = SearchIsBlocked(ahFrame)
+        if blocked == nil then
+            return nil
+        end
+        if not blocked then
+            return true
+        end
+    end
+
+    if PlaceLeftOfFavorites(bar, LayoutStacked) then
         return true
     end
-    local blocked = SearchIsBlocked(ahFrame)
-    if blocked == nil and IsShown(ahFrame) then
-        ScheduleLayoutRetry(ahFrame)
+
+    if state == "tight" and PlaceLeftOfFavorites(bar, LayoutHorizontal) then
         return true
     end
-    layoutRetries = 0
-    return not blocked
+    return state == "placed"
 end
 
 PlaceCheckbox = function(ahFrame)
@@ -692,29 +683,22 @@ PlaceCheckbox = function(ahFrame)
     end
     RaiseHolder(ahFrame)
 
-    local refresh = ShownRefresh(ahFrame.ItemBuyFrame) or ShownRefresh(ahFrame.CommoditiesBuyFrame)
-    if refresh then
-        LayoutHorizontal()
-        AnchorBeside(holder, refresh, ANCHOR_GAP)
-        local blocked = DetailIsBlocked(ahFrame, refresh)
-        if blocked == nil and IsShown(ahFrame) then
-            ScheduleLayoutRetry(ahFrame)
+    local bar = ahFrame.SearchBar
+    if IsShown(bar) and bar and bar.SearchBox and bar.FilterButton then
+        local ok = TryStableSearchPlacement(ahFrame, bar)
+        if ok == nil then
+            if IsShown(ahFrame) then
+                ScheduleLayoutRetry(ahFrame)
+            end
             return
         end
-        layoutRetries = 0
-        if not blocked then
+        if ok then
+            layoutRetries = 0
             return
         end
     end
 
-    -- Horizontal first, then the narrower stack, then the footer.
-    if TrySearchRow(ahFrame, LayoutHorizontal) then
-        return
-    end
-    if TrySearchRow(ahFrame, LayoutStacked) then
-        return
-    end
-
+    holder:SetParent(ahFrame)
     LayoutHorizontal()
     AnchorFooter(ahFrame)
     layoutRetries = 0
@@ -2092,144 +2076,264 @@ RequestDimRefresh = function()
     end
 end
 
+local SETTINGS_RESET_POPUP = "AHDRESSINGROOMHELPER_RESET_SETTINGS"
+local SETTINGS_CLOSE_LABEL = "Close Dressing Room with Auction House"
+local SETTINGS_DIM_LABEL = "Dim unsellable items when Sell tab selected"
+local SETTINGS_CLOSE_TIP = "When checked, closing the auction house also closes the Dressing Room. The close button, walking away, and other close paths all count. Leave this off and the Dressing Room stays up."
+
+local function ResetHelperSettingsToDefaults()
+    InitDB()
+    AHDressingRoomHelperDB[DB_CLOSE_KEY] = false
+    AHDressingRoomHelperDB[DB_DIM_KEY] = false
+    if settingsPanel and settingsPanel.OnRefresh then
+        settingsPanel:OnRefresh()
+    end
+    if RequestDimRefresh then
+        RequestDimRefresh()
+    end
+end
+
+local function EnsureSettingsResetPopup()
+    if type(StaticPopupDialogs) ~= "table" then
+        return
+    end
+    if StaticPopupDialogs[SETTINGS_RESET_POPUP] then
+        return
+    end
+    local okay = OKAY or ACCEPT or YES
+    local cancel = CANCEL or NO
+    StaticPopupDialogs[SETTINGS_RESET_POPUP] = {
+        text = "Reset AH Dressing Room Helper settings to defaults?",
+        button1 = okay,
+        button2 = cancel,
+        OnAccept = ResetHelperSettingsToDefaults,
+        timeout = 0,
+        whileDead = 1,
+        hideOnEscape = 1,
+        preferredIndex = 3,
+    }
+end
+
+local function ShowSettingsRowTip(owner, title, body)
+    if not GameTooltip or not owner then
+        return
+    end
+    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+    GameTooltip:SetText(title, 1, 1, 1)
+    if body and body ~= "" then
+        GameTooltip:AddLine(body, 0.9, 0.9, 0.9, true)
+    end
+    GameTooltip:Show()
+end
+
+local function CreateSettingsCheckboxRow(parent, anchorTo, yOffset, labelText, tooltipTitle, tooltipBody, onClick)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetPoint("TOPLEFT", anchorTo, "BOTTOMLEFT", 0, yOffset)
+    row:SetPoint("RIGHT", parent, "RIGHT", -32, 0)
+    row:SetHeight(44)
+
+    local checkTemplate = "SettingsCheckboxTemplate"
+    local check = CreateFrame("CheckButton", nil, row, checkTemplate)
+    if not check or not check.SetChecked then
+        check = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+        check:SetSize(24, 24)
+    end
+    check:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -6)
+
+    local label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    label:SetJustifyH("LEFT")
+    label:SetJustifyV("TOP")
+    label:SetWordWrap(true)
+    label:SetNonSpaceWrap(false)
+    label:SetText(labelText)
+    label:SetPoint("TOPLEFT", check, "TOPRIGHT", 8, -2)
+    label:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+    check.label = label
+
+    local tipFrame = CreateFrame("Frame", nil, row)
+    tipFrame:SetAllPoints(row)
+    tipFrame:EnableMouse(true)
+    tipFrame:SetScript("OnEnter", function()
+        local body = tooltipBody
+        if type(body) == "function" then
+            body = body()
+        end
+        ShowSettingsRowTip(tipFrame, tooltipTitle, body)
+    end)
+    tipFrame:SetScript("OnLeave", function()
+        if GameTooltip then
+            GameTooltip:Hide()
+        end
+    end)
+
+    check:SetScript("OnClick", function(self)
+        if not self:IsEnabled() then
+            self:SetChecked(not self:GetChecked())
+            return
+        end
+        local checked = self:GetChecked() and true or false
+        if onClick then
+            onClick(checked)
+        end
+        PlayToggleSound(checked)
+    end)
+
+    return check, row
+end
+
+local function BuildSettingsPanel()
+    if settingsPanel then
+        return settingsPanel
+    end
+    EnsureSettingsResetPopup()
+
+    local panel = CreateFrame("Frame", "AHDressingRoomHelperSettingsPanel", UIParent)
+    panel:SetSize(600, 420)
+
+    local title = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightHuge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText(SETTINGS_CATEGORY_NAME)
+
+    local defaultsLabel = DEFAULTS
+    if type(defaultsLabel) ~= "string" then
+        defaultsLabel = "Defaults"
+    end
+    local defaultsButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    defaultsButton:SetSize(96, 22)
+    defaultsButton:SetPoint("TOPRIGHT", -24, -12)
+    defaultsButton:SetText(defaultsLabel)
+    defaultsButton:SetScript("OnClick", function()
+        EnsureSettingsResetPopup()
+        if StaticPopup_Show then
+            StaticPopup_Show(SETTINGS_RESET_POPUP)
+        end
+    end)
+
+    local dressHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
+    dressHeader:SetPoint("TOPLEFT", 16, -56)
+    dressHeader:SetText("Dressing Room")
+
+    local closeRow
+    settingsCloseCheck, closeRow = CreateSettingsCheckboxRow(
+        panel,
+        dressHeader,
+        -8,
+        SETTINGS_CLOSE_LABEL,
+        SETTINGS_CLOSE_LABEL,
+        SETTINGS_CLOSE_TIP,
+        function(checked)
+            InitDB()
+            AHDressingRoomHelperDB[DB_CLOSE_KEY] = checked
+        end
+    )
+
+    local ahHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
+    ahHeader:SetPoint("TOPLEFT", closeRow, "BOTTOMLEFT", -8, -20)
+    ahHeader:SetText("Auction House")
+
+    local dimRow
+    settingsDimCheck, dimRow = CreateSettingsCheckboxRow(
+        panel,
+        ahHeader,
+        -8,
+        SETTINGS_DIM_LABEL,
+        SETTINGS_DIM_LABEL,
+        SETTINGS_DIM_LABEL,
+        DimCheckboxTooltip,
+        function(checked)
+            InitDB()
+            AHDressingRoomHelperDB[DB_DIM_KEY] = checked
+            if RequestDimRefresh then
+                RequestDimRefresh()
+            end
+        end
+    )
+
+    settingsDimNote = panel:CreateFontString(nil, "ARTWORK", "GameFontDisable")
+    settingsDimNote:SetJustifyH("LEFT")
+    settingsDimNote:SetJustifyV("TOP")
+    settingsDimNote:SetWordWrap(true)
+    settingsDimNote:SetPoint("TOPLEFT", dimRow, "BOTTOMLEFT", 40, -4)
+    settingsDimNote:SetPoint("RIGHT", panel, "RIGHT", -32, 0)
+    settingsDimNote:Hide()
+
+    function panel:OnRefresh()
+        InitDB()
+        RefreshUnsupportedLabel()
+        if settingsCloseCheck then
+            settingsCloseCheck:SetChecked(AHDressingRoomHelperDB[DB_CLOSE_KEY] == true)
+        end
+        if settingsDimCheck then
+            local blocked = unsupportedLabel ~= nil
+            settingsDimCheck:SetEnabled(not blocked)
+            settingsDimCheck:SetChecked(not blocked and AHDressingRoomHelperDB[DB_DIM_KEY] == true)
+            if settingsDimCheck.label then
+                if blocked then
+                    settingsDimCheck.label:SetTextColor(0.5, 0.5, 0.5)
+                else
+                    settingsDimCheck.label:SetTextColor(1, 0.82, 0)
+                end
+            end
+        end
+        if settingsDimNote then
+            if unsupportedLabel then
+                settingsDimNote:SetText(DimBlockedTooltip(unsupportedLabel))
+                settingsDimNote:Show()
+            else
+                settingsDimNote:Hide()
+            end
+        end
+    end
+
+    function panel:OnCommit()
+    end
+
+    function panel:OnDefault()
+        -- Blizzard's panel Defaults button is hidden for canvas categories.
+        -- Our Defaults button uses SETTINGS_RESET_POPUP instead.
+    end
+
+    panel:OnRefresh()
+    settingsPanel = panel
+    return panel
+end
+
 local function RegisterSettings()
     if settingsRegistered then
         return true
     end
-    -- A failed attempt must not run again. A second category would duplicate
-    -- the AddOns entry. Missing API is not a failure: PLAYER_LOGIN retries it.
     if settingsFailed then
         return false
     end
     if type(Settings) ~= "table" then
         return false
     end
-    if type(Settings.RegisterVerticalLayoutCategory) ~= "function"
-        or type(Settings.RegisterAddOnSetting) ~= "function"
-        or type(Settings.CreateCheckbox) ~= "function"
-        or type(Settings.RegisterAddOnCategory) ~= "function"
-        or type(Settings.VarType) ~= "table" then
+    if type(Settings.RegisterCanvasLayoutCategory) ~= "function"
+        or type(Settings.RegisterAddOnCategory) ~= "function" then
         return false
     end
 
     InitDB()
 
-    -- pcall only isolates a Lua error from a changed signature. It does not
-    -- make a protected call safe, and none of these touch combat-locked frames.
-    local ok, category, layout = pcall(Settings.RegisterVerticalLayoutCategory, SETTINGS_CATEGORY_NAME)
-    if not ok or not category then
+    local panel = BuildSettingsPanel()
+    if not panel then
         settingsFailed = true
         return false
     end
 
-    -- Same header row the Game options use (Controls, Mouse, and so on).
-    -- The checkbox still registers if this header helper is missing.
-    if layout and layout.AddInitializer and type(CreateSettingsListSectionHeaderInitializer) == "function" then
+    -- Canvas layout hides the settings list, including Blizzard's Defaults
+    -- button that can reset all UI settings. We draw our own Defaults control
+    -- on the panel and only reset AHDressingRoomHelperDB through a StaticPopup.
+    local ok, category, layout = pcall(Settings.RegisterCanvasLayoutCategory, panel, SETTINGS_CATEGORY_NAME)
+    if not ok or not category or not layout then
+        settingsFailed = true
+        return false
+    end
+    if layout.AddAnchorPoint then
         pcall(function()
-            layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Dressing Room"))
+            layout:AddAnchorPoint("TOPLEFT", 0, 0)
+            layout:AddAnchorPoint("BOTTOMRIGHT", 0, 0)
         end)
-    end
-
-    local settingOk, setting = pcall(
-        Settings.RegisterAddOnSetting,
-        category,
-        "AHDressingRoomHelper_CloseDressingRoom",
-        DB_CLOSE_KEY,
-        AHDressingRoomHelperDB,
-        Settings.VarType.Boolean,
-        "Close Dressing Room with Auction House",
-        false
-    )
-    if not settingOk or not setting then
-        settingsFailed = true
-        return false
-    end
-
-    local checkboxOk = pcall(
-        Settings.CreateCheckbox,
-        category,
-        setting,
-        "When checked, closing the auction house also closes the Dressing Room. The close button, walking away, and other close paths all count. Leave this off and the Dressing Room stays up."
-    )
-    if not checkboxOk then
-        settingsFailed = true
-        return false
-    end
-
-    -- The dim option is separate. A failure here keeps the Dressing Room
-    -- checkbox registered. The saved value is still created in InitDB.
-    if layout and layout.AddInitializer and type(CreateSettingsListSectionHeaderInitializer) == "function" then
-        pcall(function()
-            layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Auction House"))
-        end)
-    end
-
-    local dimOk, dimSetting = pcall(
-        Settings.RegisterAddOnSetting,
-        category,
-        "AHDressingRoomHelper_DimUnsellable",
-        DB_DIM_KEY,
-        AHDressingRoomHelperDB,
-        Settings.VarType.Boolean,
-        "Dim unsellable items when Sell tab selected",
-        false
-    )
-    if dimOk and dimSetting then
-        -- Tooltip is a function so the hover text can name an unsupported
-        -- bag add-on. Settings.InitTooltip calls it when the row is hovered.
-        -- Empty options table: CreateOptionsInitTooltip ipairs the options
-        -- when the row is hovered. Nil would throw. A function tooltip is
-        -- called from Settings.InitTooltip, so the text can name the add-on.
-        local function CreateDimCheckbox()
-            if type(Settings.CreateCheckboxWithOptions) == "function" then
-                return Settings.CreateCheckboxWithOptions(category, dimSetting, {}, DimCheckboxTooltip)
-            end
-            return Settings.CreateCheckbox(category, dimSetting, DimCheckboxTooltip)
-        end
-        local dimBoxOk, dimInit = pcall(CreateDimCheckbox)
-        if dimBoxOk and type(dimInit) == "table" then
-            if dimInit.AddModifyPredicate then
-                dimInit:AddModifyPredicate(function()
-                    RefreshUnsupportedLabel()
-                    return unsupportedLabel == nil
-                end)
-            end
-            if dimInit.AddEvaluateStateFrameEvent then
-                dimInit:AddEvaluateStateFrameEvent("ADDON_LOADED")
-            end
-        end
-        if dimSetting.SetValueChangedCallback then
-            dimSetting:SetValueChangedCallback(function()
-                if RequestDimRefresh then
-                    RequestDimRefresh()
-                end
-            end)
-        end
-
-        if layout and layout.AddInitializer and type(CreateSettingsListSectionHeaderInitializer) == "function" then
-            pcall(function()
-                local note = CreateSettingsListSectionHeaderInitializer("")
-                if type(note) == "table" then
-                    function note:GetName()
-                        RefreshUnsupportedLabel()
-                        if unsupportedLabel then
-                            return DimBlockedTooltip(unsupportedLabel)
-                        end
-                        return ""
-                    end
-                    if note.AddShownPredicate then
-                        note:AddShownPredicate(function()
-                            RefreshUnsupportedLabel()
-                            return unsupportedLabel ~= nil
-                        end)
-                    end
-                    if note.AddEvaluateStateFrameEvent then
-                        note:AddEvaluateStateFrameEvent("ADDON_LOADED")
-                    end
-                    layout:AddInitializer(note)
-                end
-            end)
-        end
     end
 
     local categoryOk = pcall(Settings.RegisterAddOnCategory, category)
@@ -2283,6 +2387,9 @@ function eventFrame:ADDON_LOADED(loaded)
         TryAttach()
     end
     RefreshUnsupportedLabel()
+    if settingsPanel and settingsPanel.OnRefresh then
+        settingsPanel:OnRefresh()
+    end
     if RequestDimRefresh then
         RequestDimRefresh()
     end
@@ -2320,6 +2427,9 @@ function eventFrame:PLAYER_LOGIN()
     InitDB()
     RefreshUnsupportedLabel()
     RegisterSettings()
+    if settingsPanel and settingsPanel.OnRefresh then
+        settingsPanel:OnRefresh()
+    end
 end
 
 function eventFrame:BAG_UPDATE()
