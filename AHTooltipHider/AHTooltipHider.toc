@@ -2,7 +2,7 @@
 ## Title: AH Tooltip Hider
 ## Notes: Hide auction-house item and equipped-gear tooltips while you preview gear. The checkbox resets when the auction house closes.
 ## Author: AH Tooltip Hider
-## Version: 1.0.0
+## Version: 1.1.0
 ## Category: Auction & Economy
 ## IconTexture: Interface\Icons\INV_Misc_Coin_01
 

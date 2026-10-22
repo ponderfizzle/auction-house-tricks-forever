@@ -47,7 +47,11 @@ If the dumped number is not `16001`, change the `## Interface:` line in both `AH
 ## Use
 
 1. Talk to an auctioneer and open **Browse Auctions**.
-2. The **Hide tooltips** box is in the title bar, immediately left of the close button. The centered title ("Browse Auctions", "Sell", or "Auctions") only fills the middle of that bar. The search box, Filter, and Search button are on the next row down (the search bar is placed at `y = -29`). The box sits in the empty gap between the title text and the X, so it does not cover search, categories, results, money, or Bid/Buyout. It is anchored to the close button, so it stays beside the X if the frame is scaled.
+2. **Hide tooltips** sits in the window, and which row it uses follows the pane:
+
+   - **Item results and commodity results** (the view with **Back** and a count such as "53 Available"). The box is on that row, under **Filter**, immediately left of the count and the refresh button, lined up with **Back**. Its right edge is anchored to the count frame. Back, the count, the refresh button, and the results stay clear.
+   - **Category browse** (the list before you pick an item). That row is the column headers, which start just under the search bar. The closest clear spot is the search row, immediately left of **Filter**. A single line usually meets the search box, so the words sit above the checkbox in that gap. If the gap is wide enough, they stay on one line beside the box. If a long **Filter** label leaves no room either way, the box moves to the bottom edge, just right of your money. The results list stays clear.
+   - **Sell** and **Auctions** hide the search bar, so the box uses that same bottom spot, just right of your money.
 3. Leave it unchecked for normal item tooltips and the **Equipped** comparison.
 4. Check it when you want the preview unobstructed. Hovering an auction item no longer shows that item's tooltip or the equipped-gear comparison. Ctrl-click still previews the item (the default dress-up shortcut).
 5. Uncheck it and the filter stops at once. Move onto an item row if a tooltip does not reappear on its own. The cursor is on the checkbox when you click it, so the row's hover may not fire again until you move.
@@ -78,7 +82,7 @@ An invisible tooltip would still block clicks on the preview, so the frames are 
 Run this in game. This project cannot launch the client.
 
 1. Install, restart, and enable the add-on. Confirm `/dump select(4, GetBuildInfo())`.
-2. Open the auction house. The box is present, unchecked, and not covering the search row, categories, or close button.
+2. Open the auction house. The box is present and unchecked. On category browse it sits on the search row, left of **Filter** (or, if that gap is too narrow, beside your money at the bottom). Open an item such as a dagger. The box moves to the row with **Back**, left of the available-count and the refresh button. Back, the count, the refresh button, and the results stay clear.
 3. Hover a weapon or armor (a belt or a dagger is enough). You should see the item tooltip and, when comparison is on, the **Equipped** tooltip.
 4. Check **Hide tooltips**. Hover another piece of gear. Neither tooltip should appear. Ctrl-click the row and confirm the preview model is not covered.
 5. Hover a non-item control (the Search button, a category, a seller name). Its normal text tooltip should still appear.
@@ -108,7 +112,8 @@ From the [addon development guide](https://wowforeverguides.com/addons/developer
 
 - The interface number `16001` and the `_Camelot` TOC suffix. Both come from the wiki and the Forever guide, and either can change at launch.
 - That `TooltipComparisonManager` on your build still shows comparisons on `ShoppingTooltip1` and `ShoppingTooltip2`. That is what the current public Mainline UI source does. If a Forever build draws the **Equipped** tip on some other frame, the `Show` hooks on those two frames would miss it.
-- That the title-bar gap beside the close button is still empty on your UI scale and locale. The control is anchored to the close button specifically so it tracks that corner. If a long translated title runs into the label, the label is drawn above the title text and stays clickable. Nudge the `-6, 0` offset in `PlaceCheckbox` if you want a wider gap.
+- That the results row beside the count is still empty on your build. The control's right edge is 8px left of the count/refresh frame (`PlaceCheckbox`). A very long translation grows left; if it would cross **Back**, the code uses the search-row spot instead.
+- That category browse still has no empty band under the search bar. The checkbox uses the gap left of **Filter** for that reason. If your locale's **Filter** button leaves no room beside the search box, it belongs at the bottom, just right of the money display.
 - That unchecking restores a tooltip without moving the mouse. `GetMouseFoci` is used to re-fire the row under the cursor. The cursor is usually on the checkbox itself, so expect to move back onto the row.
 
 ## Layout of the download

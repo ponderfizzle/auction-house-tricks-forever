@@ -23,6 +23,7 @@ ns.name = addonName
 -- ---------------------------------------------------------------------------
 
 local checkbox
+local holder
 local attached = false
 local attachQueued = false
 local hooksInstalled = false
@@ -77,7 +78,7 @@ end
 -- DressUpFrame is only included while the auction house is open; see
 -- AuctionHouseIsOpen, which the callers check first.
 local function IsPreviewOwner(widget)
-    if not widget or widget == checkbox then
+    if not widget or widget == checkbox or widget == holder then
         return false
     end
     if IsUnder(widget, AuctionHouseFrame) then
@@ -327,7 +328,7 @@ end
 local function FindUpdateTarget(widget)
     local current = widget
     for _ = 1, 15 do
-        if not current or current == checkbox then
+        if not current or current == checkbox or current == holder then
             return nil
         end
         if current.UpdateTooltip and IsPreviewOwner(current) then
@@ -386,48 +387,280 @@ local function ResetToggle()
     end
 end
 
-local function FindCloseButton(ahFrame)
-    if ahFrame.CloseButton then
-        return ahFrame.CloseButton
+-- Gap kept between this control and the frame it sits beside.
+local ANCHOR_GAP = 8
+
+-- GetStringWidth is 0 until the fontstring has been drawn at least once.
+local LABEL_WIDTH_FALLBACK = 96
+
+-- How many times to remeasure after a show, once anchors have a real rect.
+local layoutRetries = 0
+
+local PlaceCheckbox
+
+local function RectsOverlap(a, b, pad)
+    if not a or not b or not a.GetLeft or not b.GetLeft then
+        return false
     end
-    local frameName = ahFrame.GetName and ahFrame:GetName()
-    if frameName then
-        return _G[frameName .. "CloseButton"]
+    local al, ar, at, ab = a:GetLeft(), a:GetRight(), a:GetTop(), a:GetBottom()
+    local bl, br, bt, bb = b:GetLeft(), b:GetRight(), b:GetTop(), b:GetBottom()
+    if not (al and ar and at and ab and bl and br and bt and bb) then
+        return nil
+    end
+    pad = pad or 0
+    return (al - pad) < br and (ar + pad) > bl and (ab - pad) < bt and (at + pad) > bb
+end
+
+local function LabelWidth()
+    local textWidth = 0
+    if holder.Label and holder.Label.GetStringWidth then
+        textWidth = holder.Label:GetStringWidth() or 0
+    end
+    if textWidth >= 1 then
+        return textWidth, true
+    end
+    return LABEL_WIDTH_FALLBACK, false
+end
+
+-- Box, then the words. Used on the results row and in the footer, where
+-- there is horizontal room and the row is only about 22px tall.
+local function LayoutHorizontal()
+    if not holder or not holder.Label or not holder.Check then
+        return
+    end
+    local label = holder.Label
+    local button = holder.Check
+    button:ClearAllPoints()
+    button:SetPoint("LEFT", holder, "LEFT", 0, 0)
+    label:ClearAllPoints()
+    label:SetJustifyH("LEFT")
+    label:SetPoint("LEFT", button, "RIGHT", 4, 1)
+    local textWidth = LabelWidth()
+    holder:SetSize(24 + 4 + textWidth, 24)
+    button:SetHitRectInsets(0, -(textWidth + 8), -4, -4)
+end
+
+-- Words above the box. The browse search row is a short gap between the
+-- search box and Filter; a horizontal label often does not fit there, and
+-- this keeps the same words in that gap without crossing either control.
+local function LayoutStacked()
+    if not holder or not holder.Label or not holder.Check then
+        return
+    end
+    local label = holder.Label
+    local button = holder.Check
+    button:ClearAllPoints()
+    button:SetPoint("BOTTOM", holder, "BOTTOM", 0, 0)
+    label:ClearAllPoints()
+    label:SetJustifyH("CENTER")
+    label:SetPoint("BOTTOM", button, "TOP", 0, 0)
+    local textWidth, known = LabelWidth()
+    local textHeight = 12
+    if known and label.GetStringHeight then
+        local measured = label:GetStringHeight() or 0
+        if measured > 4 then
+            textHeight = measured
+        end
+    end
+    local width = textWidth
+    if width < 24 then
+        width = 24
+    end
+    holder:SetSize(width, textHeight + 24)
+    local side = (width - 24) / 2
+    button:SetHitRectInsets(-(side + 4), -(side + 4), -(textHeight + 4), -4)
+end
+
+local function RaiseHolder(ahFrame)
+    local level = (ahFrame:GetFrameLevel() or 0) + 30
+    -- Buy/cancel dialogs use DialogOverlay at frame level 1000. Stay under it.
+    if level > 980 then
+        level = 980
+    end
+    holder:SetFrameLevel(level)
+    if holder.Check then
+        holder.Check:SetFrameLevel(level + 1)
+    end
+end
+
+-- Gear results and commodity results both pull their "N Available" row
+-- (ItemList.RefreshFrame, 200x20) up onto the Back button's row.
+-- Gear uses refreshFrameYOffset 132; commodities uses 30. Either way the
+-- row under the search bar, left of that frame, is empty: Back ends near
+-- x=293 and the count frame starts near x=591 on the 800-wide window.
+local function ShownRefresh(frame)
+    if not IsShown(frame) or not frame.ItemList then
+        return nil
+    end
+    local refresh = frame.ItemList.RefreshFrame
+    if IsShown(refresh) then
+        return refresh
     end
     return nil
 end
 
-local function UpdateHitRect(button, label)
-    local width = label:GetStringWidth() or 0
-    if width < 1 then
-        width = 88
-    end
-    -- Negative left inset extends the clickable area over the label.
-    button:SetHitRectInsets(-(width + 8), 0, -4, -4)
+local function AnchorBeside(frame, relativeTo, gap)
+    frame:ClearAllPoints()
+    frame:SetPoint("RIGHT", relativeTo, "LEFT", -gap, 0)
 end
 
--- The auction house is an 800-wide PortraitFrame. The centered title
--- ("Browse Auctions" on the Buy tab) sits in the middle of the title bar.
--- The close button is anchored to TOPRIGHT and is about 32px wide. The
--- search row starts at y=-29, under that bar. Anchoring to the close
--- button's left edge puts this control in the empty parchment between the
--- title text and the X, above the search box, Filter, and Search button.
-local function PlaceCheckbox(ahFrame, button)
-    local closeButton = FindCloseButton(ahFrame)
-    if closeButton then
-        button:SetPoint("RIGHT", closeButton, "LEFT", -6, 0)
-    else
-        button:SetPoint("TOPRIGHT", ahFrame, "TOPRIGHT", -40, -4)
+local function DetailIsBlocked(ahFrame, refresh)
+    if not holder:GetLeft() then
+        return nil
+    end
+    local blocked = RectsOverlap(holder, refresh, 2)
+    if blocked == nil then
+        return nil
+    end
+    if blocked then
+        return true
     end
 
-    local level = ahFrame:GetFrameLevel() + 20
-    if ahFrame.TitleContainer and ahFrame.TitleContainer.GetFrameLevel then
-        level = math.max(level, ahFrame.TitleContainer:GetFrameLevel() + 10)
+    local frames = {}
+    if IsShown(ahFrame.ItemBuyFrame) then
+        frames[#frames + 1] = ahFrame.ItemBuyFrame.BackButton
+        frames[#frames + 1] = ahFrame.ItemBuyFrame.ItemDisplay
+        frames[#frames + 1] = ahFrame.ItemBuyFrame.ItemList
     end
-    if closeButton and closeButton.GetFrameLevel then
-        level = math.max(level, closeButton:GetFrameLevel())
+    if IsShown(ahFrame.CommoditiesBuyFrame) then
+        frames[#frames + 1] = ahFrame.CommoditiesBuyFrame.BackButton
+        frames[#frames + 1] = ahFrame.CommoditiesBuyFrame.BuyDisplay
+        frames[#frames + 1] = ahFrame.CommoditiesBuyFrame.ItemList
     end
-    button:SetFrameLevel(level)
+    for i = 1, #frames do
+        local hit = RectsOverlap(holder, frames[i], 2)
+        if hit == nil then
+            return nil
+        end
+        if hit then
+            return true
+        end
+    end
+    return false
+end
+
+-- Category browse hides its refresh row (hideRefreshFrame) and has no Back
+-- button. Column headers start about 4px under the search bar, so the
+-- results row from the mockup is the header row here. The nearest clear
+-- band is the search row itself, immediately left of Filter.
+local function SearchIsBlocked(ahFrame)
+    if not holder:GetLeft() then
+        return nil
+    end
+    local bar = ahFrame.SearchBar
+    if not bar then
+        return false
+    end
+    local obstacles = { bar.SearchBox, bar.FilterButton, bar.FavoritesSearchButton, bar.SearchButton }
+    for i = 1, #obstacles do
+        local hit = RectsOverlap(holder, obstacles[i], 4)
+        if hit == nil then
+            return nil
+        end
+        if hit then
+            return true
+        end
+    end
+
+    local lists = {}
+    if IsShown(ahFrame.BrowseResultsFrame) and ahFrame.BrowseResultsFrame.ItemList then
+        lists[#lists + 1] = ahFrame.BrowseResultsFrame.ItemList
+    end
+    if IsShown(ahFrame.WoWTokenResults) then
+        lists[#lists + 1] = ahFrame.WoWTokenResults
+    end
+    for i = 1, #lists do
+        local hit = RectsOverlap(holder, lists[i], 1)
+        if hit == nil then
+            return nil
+        end
+        if hit then
+            return true
+        end
+    end
+    return false
+end
+
+-- Sell, Auctions, and a browse locale whose Filter label eats the search-row
+-- gap. The coin display is 158px at the bottom left. To its right, under the
+-- category list and the results, is empty frame padding.
+local function AnchorFooter(ahFrame)
+    holder:ClearAllPoints()
+    local money = ahFrame.MoneyFrameBorder
+    if money then
+        holder:SetPoint("LEFT", money, "RIGHT", 16, -2)
+    else
+        holder:SetPoint("BOTTOMLEFT", ahFrame, "BOTTOMLEFT", 190, 4)
+    end
+end
+
+local function ScheduleLayoutRetry(ahFrame)
+    if layoutRetries >= 2 then
+        return
+    end
+    if not (C_Timer and type(C_Timer.After) == "function") then
+        return
+    end
+    layoutRetries = layoutRetries + 1
+    C_Timer.After(0, function()
+        PlaceCheckbox(ahFrame)
+    end)
+end
+
+-- Item results: right edge 8px left of the count/refresh row, which lines
+-- the control up with Back and puts it under Filter.
+-- Category browse: that row is the column headers. The control then sits on
+-- the search row, 8px left of Filter. A horizontal label that would cross
+-- the search box is stacked (words above the box) in the same gap. If that
+-- still collides, the control moves to the footer beside the money display.
+local function TrySearchRow(ahFrame, layout)
+    local bar = ahFrame.SearchBar
+    if not (IsShown(bar) and bar.FilterButton) then
+        return false
+    end
+    layout()
+    AnchorBeside(holder, bar.FilterButton, ANCHOR_GAP)
+    local blocked = SearchIsBlocked(ahFrame)
+    if blocked == nil and IsShown(ahFrame) then
+        ScheduleLayoutRetry(ahFrame)
+        return true
+    end
+    layoutRetries = 0
+    return not blocked
+end
+
+PlaceCheckbox = function(ahFrame)
+    if not holder or not ahFrame then
+        return
+    end
+    RaiseHolder(ahFrame)
+
+    local refresh = ShownRefresh(ahFrame.ItemBuyFrame) or ShownRefresh(ahFrame.CommoditiesBuyFrame)
+    if refresh then
+        LayoutHorizontal()
+        AnchorBeside(holder, refresh, ANCHOR_GAP)
+        local blocked = DetailIsBlocked(ahFrame, refresh)
+        if blocked == nil and IsShown(ahFrame) then
+            ScheduleLayoutRetry(ahFrame)
+            return
+        end
+        layoutRetries = 0
+        if not blocked then
+            return
+        end
+    end
+
+    -- Horizontal first, then the narrower stack, then the footer.
+    if TrySearchRow(ahFrame, LayoutHorizontal) then
+        return
+    end
+    if TrySearchRow(ahFrame, LayoutStacked) then
+        return
+    end
+
+    LayoutHorizontal()
+    AnchorFooter(ahFrame)
+    layoutRetries = 0
 end
 
 local function AttachCheckbox(ahFrame)
@@ -439,27 +672,39 @@ local function AttachCheckbox(ahFrame)
         return
     end
 
-    local button = CreateFrame("CheckButton", nil, ahFrame, "UICheckButtonTemplate")
+    -- One frame holds the box and the words so a single anchor moves both.
+    -- Parent stays the auction frame; the box is not a named global.
+    local holderFrame = CreateFrame("Frame", nil, ahFrame)
+    holderFrame:SetSize(24 + 4 + LABEL_WIDTH_FALLBACK, 24)
+    holder = holderFrame
+
+    local button = CreateFrame("CheckButton", nil, holderFrame, "UICheckButtonTemplate")
     button:SetSize(24, 24)
     button:SetChecked(false)
+    button:ClearAllPoints()
+    button:SetPoint("LEFT", holderFrame, "LEFT", 0, 0)
     -- Remember it before the rest of the setup. A second call cannot create
     -- another box if anything below errors on a future client.
     checkbox = button
-    PlaceCheckbox(ahFrame, button)
+    holderFrame.Check = button
 
-    -- The template ships its own font string on the right. Ours sits on the
-    -- left so the control grows away from the close button.
+    -- The template ships its own font string. Hide it and draw the label to
+    -- the right of the box, in normal reading order.
     if button.Text then
         button.Text:SetText("")
         button.Text:Hide()
     end
 
-    local label = button:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    local label = holderFrame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    label:SetJustifyH("LEFT")
     label:SetText("Hide tooltips")
-    label:SetPoint("RIGHT", button, "LEFT", -2, 1)
-    UpdateHitRect(button, label)
-    button:HookScript("OnShow", function(self)
-        UpdateHitRect(self, label)
+    label:SetPoint("LEFT", button, "RIGHT", 4, 1)
+    holderFrame.Label = label
+    LayoutHorizontal()
+    PlaceCheckbox(ahFrame)
+
+    button:HookScript("OnShow", function()
+        PlaceCheckbox(ahFrame)
     end)
 
     button:SetScript("OnClick", function(self)
@@ -496,6 +741,17 @@ local function AttachCheckbox(ahFrame)
 
     ahFrame:HookScript("OnShow", ResetToggle)
     ahFrame:HookScript("OnHide", ResetToggle)
+
+    -- SetDisplayMode hides the old panes, then shows the new ones, then
+    -- returns. Repositioning from here sees the final view, so the box does
+    -- not flash through the browse spot on the way to an item.
+    if type(hooksecurefunc) == "function" and type(ahFrame.SetDisplayMode) == "function" then
+        hooksecurefunc(ahFrame, "SetDisplayMode", function()
+            PlaceCheckbox(ahFrame)
+        end)
+    end
+
+    PlaceCheckbox(ahFrame)
 end
 
 local function TryAttach()
