@@ -1,12 +1,16 @@
--- AH Tooltip Hider
+-- Auction House Dressing Room Helper
 --
 -- While the auction house is open and its "Hide tooltips" box is checked,
 -- hide the item tooltip under the cursor and the equipped-gear comparison
 -- tooltips (ShoppingTooltip1/2, the ones titled "Equipped"). Unchecking the
 -- box, or closing the auction house, restores normal tooltips immediately.
 --
--- The checkbox is not saved. It is created unchecked and forced off every
+-- That checkbox is not saved. It is created unchecked and forced off every
 -- time the auction house shows or hides.
+--
+-- One saved option, "Close Dressing Room with Auction House", lives in
+-- AHDressingRoomHelperDB. It defaults off. When it is on, closing the
+-- auction house also hides DressUpFrame.
 --
 -- Forever uses the retail (Mainline) UI, not the Classic AuctionFrame.
 -- This file only talks to AuctionHouseFrame from Blizzard_AuctionHouseUI,
@@ -19,12 +23,21 @@ local addonName, ns = ...
 ns.name = addonName
 
 -- ---------------------------------------------------------------------------
--- State. All of this lives in this file. There is no SavedVariables table.
+-- State. The Hide tooltips box is not saved. The Dressing Room option is.
+-- AHDressingRoomHelperDB is created in ADDON_LOADED, not here.
 -- ---------------------------------------------------------------------------
+
+local DB_CLOSE_KEY = "closeDressingRoom"
+local SETTINGS_CATEGORY_NAME = "AH Dressing Room Helper"
 
 local checkbox
 local holder
 local attached = false
+local settingsCategory
+local settingsRegistered = false
+local settingsFailed = false
+local closeDressingRoomQueued = false
+local CloseDressingRoomWithAuctionHouse
 local attachQueued = false
 local hooksInstalled = false
 local canMarkItems = false
@@ -377,7 +390,7 @@ local function ShowCheckboxTip(owner)
         GameTooltip:ClearLines()
     end
     GameTooltip:SetText("Hide tooltips", 1, 1, 1)
-    GameTooltip:AddLine("Hides the auction item under your cursor and the equipped-gear comparison, so the preview stays clear. Uncheck to bring them back. This box clears when the auction house closes.", 0.9, 0.9, 0.9, true)
+    GameTooltip:AddLine("Hides the gear comparison tooltips to prevent them from obscuring the Dressing Room preview.  Uncheck this setting to bring them back.  This setting clears when the auction house window closes.", 0.9, 0.9, 0.9, true)
     GameTooltip:Show()
 end
 
@@ -540,9 +553,9 @@ local function DetailIsBlocked(ahFrame, refresh)
 end
 
 -- Category browse hides its refresh row (hideRefreshFrame) and has no Back
--- button. Column headers start about 4px under the search bar, so the
--- results row from the mockup is the header row here. The nearest clear
--- band is the search row itself, immediately left of Filter.
+-- button. Column headers start just under the search bar, so the results
+-- row from the retail mockup is the header row here. The clear spot on the
+-- Forever beta is the gap between the search box and Filter.
 local function SearchIsBlocked(ahFrame)
     if not holder:GetLeft() then
         return nil
@@ -553,7 +566,7 @@ local function SearchIsBlocked(ahFrame)
     end
     local obstacles = { bar.SearchBox, bar.FilterButton, bar.FavoritesSearchButton, bar.SearchButton }
     for i = 1, #obstacles do
-        local hit = RectsOverlap(holder, obstacles[i], 4)
+        local hit = RectsOverlap(holder, obstacles[i], 1)
         if hit == nil then
             return nil
         end
@@ -607,19 +620,60 @@ local function ScheduleLayoutRetry(ahFrame)
     end)
 end
 
--- Item results: right edge 8px left of the count/refresh row, which lines
--- the control up with Back and puts it under Filter.
--- Category browse: that row is the column headers. The control then sits on
--- the search row, 8px left of Filter. A horizontal label that would cross
--- the search box is stacked (words above the box) in the same gap. If that
--- still collides, the control moves to the footer beside the money display.
+-- GetLeft/GetRight are screen pixels. SetPoint offsets are in the holder's
+-- own scale. Divide so a scaled auction frame still lands on the midpoint.
+local function ScreenGapToLocal(leftFrame, rightEdge, leftEdge)
+    local scale = 1
+    if leftFrame.GetEffectiveScale then
+        scale = leftFrame:GetEffectiveScale() or 1
+    end
+    if scale == 0 then
+        scale = 1
+    end
+    return (rightEdge - leftEdge) / scale
+end
+
+-- Center the control in the open space between the search box and Filter.
+-- Returns nil when those edges are not measurable yet.
+local function AnchorCenteredInSearchGap(bar)
+    local box = bar.SearchBox
+    local filter = bar.FilterButton
+    if not box or not filter or not box.GetRight or not filter.GetLeft then
+        return nil
+    end
+    local boxRight = box:GetRight()
+    local filterLeft = filter:GetLeft()
+    local width = holder:GetWidth()
+    if not boxRight or not filterLeft or not width or width < 1 then
+        return nil
+    end
+    local gap = ScreenGapToLocal(holder, filterLeft, boxRight)
+    local rightGap = (gap - width) / 2
+    holder:ClearAllPoints()
+    holder:SetPoint("RIGHT", filter, "LEFT", -rightGap, 0)
+    return true
+end
+
+-- Item results: right edge 8px left of the count/refresh row, in line with Back.
+-- Category browse on the Forever beta: column headers fill that row, so the
+-- control sits in the search row. Its midpoint is halfway between the search
+-- box's right edge and Filter's left edge. A line that would cross the search
+-- box is stacked (words above the box) in that same gap. If that still
+-- collides, the control moves to the footer beside the money display.
 local function TrySearchRow(ahFrame, layout)
     local bar = ahFrame.SearchBar
     if not (IsShown(bar) and bar.FilterButton) then
         return false
     end
     layout()
-    AnchorBeside(holder, bar.FilterButton, ANCHOR_GAP)
+    local centered = AnchorCenteredInSearchGap(bar)
+    if centered == nil then
+        AnchorBeside(holder, bar.FilterButton, ANCHOR_GAP)
+        if IsShown(ahFrame) then
+            ScheduleLayoutRetry(ahFrame)
+        end
+        return true
+    end
     local blocked = SearchIsBlocked(ahFrame)
     if blocked == nil and IsShown(ahFrame) then
         ScheduleLayoutRetry(ahFrame)
@@ -741,6 +795,9 @@ local function AttachCheckbox(ahFrame)
 
     ahFrame:HookScript("OnShow", ResetToggle)
     ahFrame:HookScript("OnHide", ResetToggle)
+    ahFrame:HookScript("OnHide", function()
+        CloseDressingRoomWithAuctionHouse()
+    end)
 
     -- SetDisplayMode hides the old panes, then shows the new ones, then
     -- returns. Repositioning from here sees the final view, so the box does
@@ -773,12 +830,166 @@ local function TryAttachSoon()
 end
 
 -- ---------------------------------------------------------------------------
+-- Saved option. Hide tooltips stays ephemeral. This one does not.
+-- ---------------------------------------------------------------------------
+
+local function InitDB()
+    -- SavedVariables are applied just before this addon's ADDON_LOADED.
+    -- Creating the table here, not at file scope, is what the Forever guide asks.
+    if type(AHDressingRoomHelperDB) ~= "table" then
+        AHDressingRoomHelperDB = {}
+    end
+    if AHDressingRoomHelperDB[DB_CLOSE_KEY] == nil then
+        AHDressingRoomHelperDB[DB_CLOSE_KEY] = false
+    end
+end
+
+local function CloseDressingRoomEnabled()
+    return type(AHDressingRoomHelperDB) == "table" and AHDressingRoomHelperDB[DB_CLOSE_KEY] == true
+end
+
+local function HideDressingRoomFrame()
+    if type(HideUIPanel) == "function" then
+        HideUIPanel(DressUpFrame)
+        return
+    end
+    if DressUpFrame.Hide then
+        DressUpFrame:Hide()
+    end
+end
+
+-- X, walking away, and AUCTION_HOUSE_CLOSED all land here. Escape already
+-- closes both windows; hiding an already-hidden DressUpFrame is a no-op.
+-- Off leaves the Dressing Room where it is.
+CloseDressingRoomWithAuctionHouse = function()
+    if not CloseDressingRoomEnabled() then
+        closeDressingRoomQueued = false
+        return
+    end
+    if not DressUpFrame or not IsShown(DressUpFrame) then
+        closeDressingRoomQueued = false
+        return
+    end
+    -- DressUpFrame is a protected UI panel. HideUIPanel during combat is blocked.
+    if type(InCombatLockdown) == "function" and InCombatLockdown() then
+        closeDressingRoomQueued = true
+        return
+    end
+    closeDressingRoomQueued = false
+    HideDressingRoomFrame()
+end
+
+local function RegisterSettings()
+    if settingsRegistered then
+        return true
+    end
+    -- A failed attempt must not run again. A second category would duplicate
+    -- the AddOns entry. Missing API is not a failure: PLAYER_LOGIN retries it.
+    if settingsFailed then
+        return false
+    end
+    if type(Settings) ~= "table" then
+        return false
+    end
+    if type(Settings.RegisterVerticalLayoutCategory) ~= "function"
+        or type(Settings.RegisterAddOnSetting) ~= "function"
+        or type(Settings.CreateCheckbox) ~= "function"
+        or type(Settings.RegisterAddOnCategory) ~= "function"
+        or type(Settings.VarType) ~= "table" then
+        return false
+    end
+
+    InitDB()
+
+    -- pcall only isolates a Lua error from a changed signature. It does not
+    -- make a protected call safe, and none of these touch combat-locked frames.
+    local ok, category, layout = pcall(Settings.RegisterVerticalLayoutCategory, SETTINGS_CATEGORY_NAME)
+    if not ok or not category then
+        settingsFailed = true
+        return false
+    end
+
+    -- Same header row the Game options use (Controls, Mouse, and so on).
+    -- The checkbox still registers if this header helper is missing.
+    if layout and layout.AddInitializer and type(CreateSettingsListSectionHeaderInitializer) == "function" then
+        pcall(function()
+            layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Dressing Room"))
+        end)
+    end
+
+    local settingOk, setting = pcall(
+        Settings.RegisterAddOnSetting,
+        category,
+        "AHDressingRoomHelper_CloseDressingRoom",
+        DB_CLOSE_KEY,
+        AHDressingRoomHelperDB,
+        Settings.VarType.Boolean,
+        "Close Dressing Room with Auction House",
+        false
+    )
+    if not settingOk or not setting then
+        settingsFailed = true
+        return false
+    end
+
+    local checkboxOk = pcall(
+        Settings.CreateCheckbox,
+        category,
+        setting,
+        "When checked, closing the auction house also closes the Dressing Room. The close button, walking away, and other close paths all count. Leave this off and the Dressing Room stays up."
+    )
+    if not checkboxOk then
+        settingsFailed = true
+        return false
+    end
+
+    local categoryOk = pcall(Settings.RegisterAddOnCategory, category)
+    if not categoryOk then
+        settingsFailed = true
+        return false
+    end
+
+    settingsCategory = category
+    settingsRegistered = true
+    return true
+end
+
+local function OpenSettings()
+    if not RegisterSettings() or not settingsCategory or not settingsCategory.GetID then
+        return false
+    end
+    if type(Settings) ~= "table" or type(Settings.OpenToCategory) ~= "function" then
+        return false
+    end
+    local categoryID = settingsCategory:GetID()
+    if type(categoryID) ~= "number" then
+        return false
+    end
+    Settings.OpenToCategory(categoryID)
+    return true
+end
+
+-- WoW matches slash commands without regard to case. Both spellings are
+-- registered so /ahdrh and /AHDRH open the same category.
+SLASH_AHDRESSINGROOMHELPER1 = "/ahdrh"
+SLASH_AHDRESSINGROOMHELPER2 = "/AHDRH"
+SlashCmdList.AHDRESSINGROOMHELPER = function()
+    if not OpenSettings() then
+        print("AH Dressing Room Helper: open Game Menu, Options, AddOns, then AH Dressing Room Helper.")
+    end
+end
+
+-- ---------------------------------------------------------------------------
 -- Events. One frame, one dispatcher. The auction-house UI loads later.
 -- ---------------------------------------------------------------------------
 
 local eventFrame = CreateFrame("Frame")
 
 function eventFrame:ADDON_LOADED(loaded)
+    if loaded == addonName then
+        InitDB()
+        RegisterSettings()
+    end
     if loaded == "Blizzard_AuctionHouseUI" then
         TryAttach()
     end
@@ -802,15 +1013,23 @@ end
 
 function eventFrame:AUCTION_HOUSE_CLOSED()
     ResetToggle()
+    CloseDressingRoomWithAuctionHouse()
 end
 
 function eventFrame:PLAYER_LOGIN()
     InstallHooks()
+    InitDB()
+    RegisterSettings()
 end
 
 function eventFrame:PLAYER_REGEN_ENABLED()
     if attachQueued then
         TryAttach()
+    end
+    if closeDressingRoomQueued and not AuctionHouseIsOpen() then
+        CloseDressingRoomWithAuctionHouse()
+    else
+        closeDressingRoomQueued = false
     end
 end
 
