@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: Auction House Tricks Forever
+## Notes: Auction House tweaks for Forever: hide preview tooltips from the Filter menu, optionally close the Dressing Room with the auction house, and dim bag items that cannot be posted on the Sell tab.
+## Author: Auction House Tricks Forever
+## Version: 2.0.0
+## SavedVariables: AuctionHouseTricksForeverDB
+## Category: Auction & Economy
+## IconTexture: Interface\Icons\INV_Misc_Coin_01
+
+AuctionHouseTricksForever.lua

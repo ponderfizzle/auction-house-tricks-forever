@@ -1,0 +1,14 @@
+# Forever game-type TOC. The client loads this instead of AuctionHouseTricksForever.toc
+# when it still recognizes the Camelot suffix. Same addon either way.
+# The wiki said this suffix may be renamed at launch; the unsuffixed file
+# is the fallback and declares the same interface number.
+## Interface: 16001
+## Title: Auction House Tricks Forever
+## Notes: Auction House tweaks for Forever: hide preview tooltips from the Filter menu, optionally close the Dressing Room with the auction house, and dim bag items that cannot be posted on the Sell tab.
+## Author: Auction House Tricks Forever
+## Version: 2.0.0
+## SavedVariables: AuctionHouseTricksForeverDB
+## Category: Auction & Economy
+## IconTexture: Interface\Icons\INV_Misc_Coin_01
+
+AuctionHouseTricksForever.lua
