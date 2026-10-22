@@ -92,7 +92,7 @@ Bank bags are not dimmed. Backpack, equipped bags, and the reagent bag are.
 | Bag UI | Role |
 | --- | --- |
 | Default Blizzard bags (`ContainerFrame1` through `ContainerFrameN`, and `ContainerFrameCombinedBags`) | First test target. Buttons come from `EnumerateValidItems` / `Items`, with `GetBagID()` and `GetID()`. |
-| Bagnon | Second test target. Reviewed against BagBrother's item button (`bag` + `GetID()`, and `UpdateBorder` resetting alpha). Not run inside the game. |
+| Bagnon and Bagnonium | Second test target. Same BagBrother item button (`.bag` / `GetBag()`, `GetID()` is the slot, `UpdateBorder` resets alpha). Bagnonium is the current name of Combuctor. Reviewed against that source, not run inside the game. |
 | Baganator, AdiBags, BetterBags, ArkInventory | Included for later testing. Each adapter loads only when that add-on is loaded, and each is wrapped so a missing or changed add-on does not error. |
 | Any other button that can report a player bag and slot | Small generic scan, only while dimming is on. It skips action bars and the auction house window. |
 
@@ -100,9 +100,9 @@ Bank bags are not dimmed. Backpack, equipped bags, and the reagent bag are.
 
 If one of these is loaded, the checkbox is grayed out and dimming does not run. The saved value is not changed, so it comes back when you stop using that bag UI and `/reload`.
 
-Combuctor, Inventorian, LiteBag, Sorted, cargBags (including Nivaya, Smoof, and Simplicity), Baggins, BaudBag, OneBag, OneBag3, ElvUI, and Tukui.
+Inventorian, LiteBag, Sorted, cargBags (including Nivaya, Smoof, and Simplicity), Baggins, BaudBag, OneBag, OneBag3, ElvUI, and Tukui.
 
-The checkbox tooltip, and a note under it, read: "Not available with &lt;AddOnName&gt;. Supported: default bags, Bagnon, Baganator, AdiBags, BetterBags, ArkInventory."
+The checkbox tooltip, and a gray note under it, read: "Not available with &lt;AddOnName&gt;. Supported: default bags, Bagnon, Bagnonium, Baganator, AdiBags, BetterBags, ArkInventory." The checkbox is disabled (`Disable()`), the label uses `GameFontDisable`, and clicks do not change `dimUnsellable`. Detection runs when the options panel is shown, from `C_AddOns.IsAddOnLoaded` and `C_AddOns.GetAddOnEnableState`. Having no bag add-on is not a block.
 
 If some other bag UI errors while dimming, dimming stops for that session, every icon we changed is restored, and chat gets one line: `AH Dressing Room Helper: item dimming turned off — bag add-on not supported`. The saved checkbox stays as it was. `/reload` tries again.
 
@@ -124,14 +124,14 @@ The hooks are filters, not replacements. `hooksecurefunc` runs after Blizzard's 
 
 An invisible tooltip would still block clicks on the preview, so the frames are actually hidden, not faded out.
 
-The options entry uses `Settings.RegisterCanvasLayoutCategory` with a custom panel frame, then `Settings.RegisterAddOnCategory`. Canvas layout replaces the scrollable settings list for this category, which hides Blizzard's header **Defaults** button (the one that can reset all game UI settings). The add-on draws its own **Defaults** control on the panel; it opens a `StaticPopup` that only resets `AHDressingRoomHelperDB` keys (`closeDressingRoom` and `dimUnsellable` to false) and refreshes the checkboxes. The list name is still **AH Dressing Room Helper**. `/ahdrh` calls `Settings.OpenToCategory` on that category. Each row is checkbox-left, full label text on the right. The dim row is disabled (not the saved value) while an unsupported bag add-on is loaded.
+The options entry uses `Settings.RegisterCanvasLayoutCategory` with a custom panel frame, then `Settings.RegisterAddOnCategory`. Canvas layout replaces the scrollable settings list for this category, which hides Blizzard's header **Defaults** button (the one that can reset all game UI settings). The add-on draws its own **Defaults** control on the panel; it opens a `StaticPopup` that only resets `AHDressingRoomHelperDB` keys (`closeDressingRoom` and `dimUnsellable` to false) and refreshes the checkboxes. The list name is still **AH Dressing Room Helper**. `/ahdrh` calls `Settings.OpenToCategory` on that category. Both sections use the same left edge. Headers use `GameFontNormal`. Option labels use `GameFontHighlight`. Each checkbox's click writes its key through the same helper, and the panel refresh reads those keys back. The dim row is disabled while an unsupported bag add-on is loaded, without rewriting the saved value.
 
 ## Manual test
 
 Run this in game. This project cannot launch the client.
 
 1. Remove any old `AHTooltipHider` folder. Install `AHDressingRoomHelper`, restart, and enable **Auction House Dressing Room Helper**. Confirm `/dump select(4, GetBuildInfo())` is `16001`.
-2. Open the auction house on **Buy** / Browse. **Hide tooltips** is present and unchecked. The checkbox and label together sit centered in the gap between the search box and **Filter** (or just left of the favorites star if that gap is too narrow). It does not cover the search box, Filter, or the results.
+2. Open the auction house on **Buy** / Browse. **Hide tooltips** is present and unchecked, centered between the search box and **Filter** (the checkbox and the words together). It stays in that gap. It does not cover the search box, Filter, or the results.
 3. Hover a piece of armor. You should see the item tooltip and, when comparison is on, the **Equipped** tooltip.
 4. Check **Hide tooltips**. Hover another piece of gear. Neither tooltip should appear. Ctrl-click the row and confirm the Dressing Room model is not covered. The checkbox help should read: "Hides the gear comparison tooltips to prevent them from obscuring the Dressing Room preview.  Uncheck this setting to bring them back.  This setting clears when the auction house window closes."
 5. Hover a non-item control (the Search button, a category). Its normal text tooltip should still appear.
@@ -161,14 +161,14 @@ Run this in game. This project cannot launch the client.
 
 ### Unsupported bag UI
 
-20. Enable one add-on from the unsupported list (Combuctor is enough). `/reload`. `/ahdrh`. **Dim unsellable items when Sell tab selected** is grayed out. Its tooltip names that add-on and lists the supported bag UIs. Open the Sell tab: nothing is dimmed. `/dump AHDressingRoomHelperDB.dimUnsellable` is unchanged from before this test. Disable that bag add-on, `/reload`, and the checkbox works again with the same saved value.
+20. Enable one add-on from the unsupported list (Inventorian is enough). `/reload`. `/ahdrh`. **Dim unsellable items when Sell tab selected** is grayed out and cannot be clicked. Its tooltip names that add-on and lists the supported bag UIs, including Bagnonium. A gray note under the row names the add-on. `/dump AHDressingRoomHelperDB.dimUnsellable` is unchanged. Disable that bag add-on, `/reload`, and the checkbox works again with the same saved value.
 
-### v1.4 UI fixes
+### v1.5
 
-21. **Browse placement:** On Browse, the **Hide tooltips** control looks centered between the search box and **Filter** (not hugging the search box). If your layout is very tight, it may sit just left of the favorites star instead.
-22. **Stable position:** From Browse, open an item listing (Back button row visible). **Hide tooltips** stays in the same screen position as step 21; it does not jump down beside Back. Click **Back** and confirm it still matches.
-23. **Settings labels:** `/ahdrh`. Both saved options show their full names (no `...` truncation). Checkboxes line up in a column on the left; labels read to the right.
-24. **Safe Defaults:** Click **Defaults** on the add-on page. You should see only a confirm dialog for **AH Dressing Room Helper** with Confirm/Cancel (not Blizzard's "All Settings" / "These Settings" dialog). Confirm resets both saved options to off and leaves other game settings untouched.
+21. **Dim setting saves.** With default bags (no bag add-on), check **Dim unsellable items when Sell tab selected**, close Options, and open them again. It is still checked. `/dump AHDressingRoomHelperDB.dimUnsellable` is `true`. Open the Sell tab and confirm soulbound items dim. Repeat with Bagnon, then with Bagnonium. **Close Dressing Room with Auction House** still saves on its own.
+22. **Settings layout.** Both headers line up on the left. Both checkboxes line up in one column. Both option labels are the same color.
+23. **Tooltips.** Hover each checkbox. The tip sits on the checkbox. The title is the setting name once, then a short description. A blocked dim row also includes the "Not available with …" line.
+24. **Browse placement.** **Hide tooltips** sits between the search box and **Filter**, centered as a pair. It does not sit left of the favorites star. Open an item and press Back: it stays in that same spot.
 
 ## Forever guide checklist
 

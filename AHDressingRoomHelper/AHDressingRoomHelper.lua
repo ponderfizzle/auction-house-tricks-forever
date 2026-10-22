@@ -444,9 +444,12 @@ end
 
 -- Box, then the words. Used on the results row and in the footer, where
 -- there is horizontal room and the row is only about 22px tall.
-local function LayoutHorizontal()
+local function LayoutHorizontal(labelGap)
     if not holder or not holder.Label or not holder.Check then
         return
+    end
+    if type(labelGap) ~= "number" then
+        labelGap = 4
     end
     local label = holder.Label
     local button = holder.Check
@@ -454,10 +457,10 @@ local function LayoutHorizontal()
     button:SetPoint("LEFT", holder, "LEFT", 0, 0)
     label:ClearAllPoints()
     label:SetJustifyH("LEFT")
-    label:SetPoint("LEFT", button, "RIGHT", 4, 1)
+    label:SetPoint("LEFT", button, "RIGHT", labelGap, 1)
     local textWidth = LabelWidth()
-    holder:SetSize(24 + 4 + textWidth, 24)
-    button:SetHitRectInsets(0, -(textWidth + 8), -4, -4)
+    holder:SetSize(24 + labelGap + textWidth, 24)
+    button:SetHitRectInsets(0, -(textWidth + labelGap + 4), -4, -4)
 end
 
 -- Words above the box. The browse search row is a short gap between the
@@ -503,9 +506,7 @@ local function RaiseHolder(ahFrame)
     end
 end
 
--- Minimum open space between the search box and Filter before the control
--- moves left of the favorites star instead of sitting in the gap.
-local SEARCH_ROW_MIN_GAP = 8
+-- Browse and item detail share this. Never leave the search-to-Filter gap.
 
 -- Category browse hides its refresh row (hideRefreshFrame) and has no Back
 -- button. Column headers start just under the search bar, so the results
@@ -588,16 +589,16 @@ local function ScreenGapToLocal(leftFrame, rightEdge, leftEdge)
     return (rightEdge - leftEdge) / scale
 end
 
--- Center the holder in the gap between the search box and Filter. The left
--- edge of the holder is offset from the search box's right edge by half of
--- (gap - width), so the combined checkbox and label are centered, not just
--- the checkbox. Returns "placed", "tight", or nil when edges are unknown.
-local function PlaceCenteredInSearchGap(bar, layout)
+-- Center the checkbox and its label together between the search box and
+-- Filter. Parent stays SearchBar, so Browse, item detail, and Back share
+-- one anchor. A tight gap still uses this spot; it is never moved left of
+-- the favorites star. A 2px label gap keeps the pair inside Forever's row.
+local function PlaceCenteredInSearchGap(bar)
     if not bar or not bar.SearchBox or not bar.FilterButton then
         return nil
     end
     holder:SetParent(bar)
-    layout()
+    LayoutHorizontal(2)
     local box = bar.SearchBox
     local filter = bar.FilterButton
     local boxRight = box.GetRight and box:GetRight()
@@ -607,74 +608,13 @@ local function PlaceCenteredInSearchGap(bar, layout)
         return nil
     end
     local gap = ScreenGapToLocal(holder, filterLeft, boxRight)
-    if gap < width + SEARCH_ROW_MIN_GAP then
-        return "tight"
+    local offset = (gap - width) / 2
+    if offset < 0 then
+        offset = 0
     end
     holder:ClearAllPoints()
-    holder:SetPoint("LEFT", box, "RIGHT", (gap - width) / 2, 0)
-    return "placed"
-end
-
--- When the search-to-Filter gap is too narrow, sit just left of the star.
-local function PlaceLeftOfFavorites(bar, layout)
-    local fav = bar and bar.FavoritesSearchButton
-    if not fav then
-        return false
-    end
-    holder:SetParent(bar)
-    layout()
-    holder:ClearAllPoints()
-    holder:SetPoint("RIGHT", fav, "LEFT", -8, 0)
+    holder:SetPoint("LEFT", box, "RIGHT", offset, 0)
     return true
-end
-
--- Browse and item detail both keep SearchBar visible. Parent to SearchBar and
--- anchor from the search box / Filter geometry only, never from Back or the
--- refresh row, so the control does not jump when a listing is opened.
-local function TryStableSearchPlacement(ahFrame, bar)
-    local state = PlaceCenteredInSearchGap(bar, LayoutHorizontal)
-    if state == nil then
-        return nil
-    end
-    if state == "placed" then
-        local blocked = SearchIsBlocked(ahFrame)
-        if blocked == nil then
-            return nil
-        end
-        if not blocked then
-            return true
-        end
-    end
-
-    if PlaceLeftOfFavorites(bar, LayoutHorizontal) then
-        local blocked = SearchIsBlocked(ahFrame)
-        if blocked == nil then
-            return nil
-        end
-        if not blocked then
-            return true
-        end
-    end
-
-    state = PlaceCenteredInSearchGap(bar, LayoutStacked)
-    if state == "placed" then
-        local blocked = SearchIsBlocked(ahFrame)
-        if blocked == nil then
-            return nil
-        end
-        if not blocked then
-            return true
-        end
-    end
-
-    if PlaceLeftOfFavorites(bar, LayoutStacked) then
-        return true
-    end
-
-    if state == "tight" and PlaceLeftOfFavorites(bar, LayoutHorizontal) then
-        return true
-    end
-    return state == "placed"
 end
 
 PlaceCheckbox = function(ahFrame)
@@ -685,7 +625,7 @@ PlaceCheckbox = function(ahFrame)
 
     local bar = ahFrame.SearchBar
     if IsShown(bar) and bar and bar.SearchBox and bar.FilterButton then
-        local ok = TryStableSearchPlacement(ahFrame, bar)
+        local ok = PlaceCenteredInSearchGap(bar)
         if ok == nil then
             if IsShown(ahFrame) then
                 ScheduleLayoutRetry(ahFrame)
@@ -892,14 +832,13 @@ end
 -- ---------------------------------------------------------------------------
 
 local DIM_ALPHA = 0.35
-local DIM_TOOLTIP = "While the Sell tab is open, items in your bags that cannot be posted are dimmed. Soulbound items are dimmed. A quest item is dimmed only when it cannot be posted, not just because it is a quest item. Leaving the Sell tab, closing the auction house, or turning this off restores every icon."
-local SUPPORTED_BAGS = "default bags, Bagnon, Baganator, AdiBags, BetterBags, ArkInventory"
+local DIM_DESCRIPTION = "While the Auction House Sell tab is open, dims bag items that can't be listed."
+local SUPPORTED_BAGS = "default bags, Bagnon, Bagnonium, Baganator, AdiBags, BetterBags, ArkInventory"
 
 -- Folder names (the name C_AddOns.IsAddOnLoaded expects), plus a short label
 -- used when the TOC title cannot be read. These UIs replace the bag buttons
 -- in ways this add-on does not hook.
 local UNSUPPORTED_BAG_ADDONS = {
-    { name = "Combuctor", label = "Combuctor" },
     { name = "Inventorian", label = "Inventorian" },
     { name = "LiteBag", label = "LiteBag" },
     { name = "Sorted", label = "Sorted" },
@@ -952,7 +891,7 @@ local dimActive = false
 local dimEpoch = 0
 local scanEpoch = 0
 local sellProbe
-local bagnonMethodsHooked = false
+local hookedBagClasses = setmetatable({}, { __mode = "k" })
 local arkMethodsHooked = false
 local baganatorRegistered = false
 local lastGenericScan = 0
@@ -964,6 +903,54 @@ local function PlainString(value)
     return value
 end
 
+local function AddonEnableState(name)
+    local function active(state)
+        if IsSecret(state) then
+            return false
+        end
+        if state == true then
+            return true
+        end
+        if type(state) == "number" and state > 0 then
+            return true
+        end
+        return false
+    end
+    local character
+    if type(UnitName) == "function" then
+        local ok, value = pcall(UnitName, "player")
+        if ok then
+            character = PlainString(value)
+        end
+    end
+    if C_AddOns and type(C_AddOns.GetAddOnEnableState) == "function" then
+        local attempts = {
+            function() return C_AddOns.GetAddOnEnableState(name, character) end,
+            function() return C_AddOns.GetAddOnEnableState(character, name) end,
+            function() return C_AddOns.GetAddOnEnableState(name) end,
+        }
+        for i = 1, #attempts do
+            local ok, state = pcall(attempts[i])
+            if ok and active(state) then
+                return true
+            end
+        end
+    end
+    if type(GetAddOnEnableState) == "function" then
+        local ok, state = pcall(GetAddOnEnableState, character, name)
+        if ok and active(state) then
+            return true
+        end
+        ok, state = pcall(GetAddOnEnableState, name)
+        if ok and active(state) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Loaded, or enabled for this character even if it has not finished loading.
+-- "No bag add-on" is not a block. Only names on the unsupported list are.
 local function AddonLoaded(name)
     if C_AddOns and type(C_AddOns.IsAddOnLoaded) == "function" then
         local ok, loaded = pcall(C_AddOns.IsAddOnLoaded, name)
@@ -978,6 +965,13 @@ local function AddonLoaded(name)
         end
     end
     return false
+end
+
+local function AddonIsActive(name)
+    if AddonLoaded(name) then
+        return true
+    end
+    return AddonEnableState(name)
 end
 
 local function AddonTitle(entry)
@@ -1007,7 +1001,7 @@ local function RefreshUnsupportedLabel()
     local found = {}
     for i = 1, #UNSUPPORTED_BAG_ADDONS do
         local entry = UNSUPPORTED_BAG_ADDONS[i]
-        if AddonLoaded(entry.name) then
+        if AddonIsActive(entry.name) then
             found[#found + 1] = AddonTitle(entry)
         end
     end
@@ -1026,12 +1020,12 @@ local function DimBlockedTooltip(label)
     return "Not available with " .. label .. ". Supported: " .. SUPPORTED_BAGS .. "."
 end
 
-local function DimCheckboxTooltip()
+local function DimTipBody()
     RefreshUnsupportedLabel()
     if unsupportedLabel then
-        return DimBlockedTooltip(unsupportedLabel)
+        return DIM_DESCRIPTION .. " " .. DimBlockedTooltip(unsupportedLabel)
     end
-    return DIM_TOOLTIP
+    return DIM_DESCRIPTION
 end
 
 local function DimSavedOn()
@@ -1668,8 +1662,8 @@ local function ScanBlizzardBags()
     end)
 end
 
-local function HookBagnonClass(class)
-    if bagnonMethodsHooked or type(class) ~= "table" or type(hooksecurefunc) ~= "function" then
+local function HookBagFamilyClass(class)
+    if hookedBagClasses[class] or type(class) ~= "table" or type(hooksecurefunc) ~= "function" then
         return
     end
     local function after(self)
@@ -1685,7 +1679,7 @@ local function HookBagnonClass(class)
         hooked = true
     end
     if hooked then
-        bagnonMethodsHooked = true
+        hookedBagClasses[class] = true
     end
 end
 
@@ -1705,13 +1699,21 @@ local function WalkItemChildren(frame, depth)
     end
 end
 
-local function ScanBagnon()
-    if not AddonLoaded("Bagnon") then
+-- Bagnon, Bagnonium, and Combuctor are skins on the same BagBrother item
+-- button: .bag / GetBag(), GetID() is the slot, and UpdateBorder resets alpha.
+local BAG_FAMILY = {
+    { addon = "Bagnon", framePrefix = "BagnonInventory" },
+    { addon = "Bagnonium", framePrefix = "BagnoniumInventory" },
+    { addon = "Combuctor", framePrefix = "CombuctorInventory" },
+}
+
+local function ScanBagFamily(spec)
+    local addon = _G[spec.addon]
+    if type(addon) ~= "table" and not AddonLoaded(spec.addon) then
         return
     end
-    local addon = Bagnon
     if type(addon) == "table" then
-        HookBagnonClass(addon.ContainerItem or addon.Item)
+        HookBagFamilyClass(addon.ContainerItem or addon.Item)
         local classes = { addon.ContainerItem, addon.Item }
         for i = 1, #classes do
             local frames = classes[i] and classes[i].__frames
@@ -1726,10 +1728,16 @@ local function ScanBagnon()
         end
     end
     for i = 1, 4 do
-        local frame = _G["BagnonInventory" .. i]
+        local frame = _G[spec.framePrefix .. i]
         if type(frame) == "table" then
             WalkItemChildren(frame, 0)
         end
+    end
+end
+
+local function ScanBagnon()
+    for i = 1, #BAG_FAMILY do
+        ScanBagFamily(BAG_FAMILY[i])
     end
 end
 
@@ -2120,55 +2128,64 @@ local function ShowSettingsRowTip(owner, title, body)
     end
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
     GameTooltip:SetText(title, 1, 1, 1)
-    if body and body ~= "" then
+    if type(body) == "string" and body ~= "" and body ~= title then
         GameTooltip:AddLine(body, 0.9, 0.9, 0.9, true)
     end
     GameTooltip:Show()
 end
 
+local function WriteSavedOption(key, checked)
+    InitDB()
+    AHDressingRoomHelperDB[key] = checked and true or false
+end
+
+-- Both saved rows use this. onClick receives the new boolean and writes the
+-- same DB table OnRefresh reads. A full-row mouse frame is not used: it sat
+-- on top of the checkbox and anchored the tooltip to the panel's right edge.
 local function CreateSettingsCheckboxRow(parent, anchorTo, yOffset, labelText, tooltipTitle, tooltipBody, onClick)
     local row = CreateFrame("Frame", nil, parent)
     row:SetPoint("TOPLEFT", anchorTo, "BOTTOMLEFT", 0, yOffset)
     row:SetPoint("RIGHT", parent, "RIGHT", -32, 0)
-    row:SetHeight(44)
+    row:SetHeight(28)
 
-    local checkTemplate = "SettingsCheckboxTemplate"
-    local check = CreateFrame("CheckButton", nil, row, checkTemplate)
-    if not check or not check.SetChecked then
-        check = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
-        check:SetSize(24, 24)
+    local check = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+    check:SetSize(24, 24)
+    check:SetPoint("LEFT", row, "LEFT", 0, 0)
+    if check.SetMotionScriptsWhileDisabled then
+        check:SetMotionScriptsWhileDisabled(true)
     end
-    check:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -6)
+    if check.Text then
+        check.Text:SetText("")
+        check.Text:Hide()
+    end
 
     local label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     label:SetJustifyH("LEFT")
-    label:SetJustifyV("TOP")
-    label:SetWordWrap(true)
-    label:SetNonSpaceWrap(false)
+    label:SetJustifyV("MIDDLE")
+    label:SetWordWrap(false)
     label:SetText(labelText)
-    label:SetPoint("TOPLEFT", check, "TOPRIGHT", 8, -2)
+    label:SetPoint("LEFT", check, "RIGHT", 6, 0)
     label:SetPoint("RIGHT", row, "RIGHT", 0, 0)
     check.label = label
 
-    local tipFrame = CreateFrame("Frame", nil, row)
-    tipFrame:SetAllPoints(row)
-    tipFrame:EnableMouse(true)
-    tipFrame:SetScript("OnEnter", function()
-        local body = tooltipBody
-        if type(body) == "function" then
-            body = body()
+    local function tipBody()
+        if type(tooltipBody) == "function" then
+            return tooltipBody()
         end
-        ShowSettingsRowTip(tipFrame, tooltipTitle, body)
+        return tooltipBody
+    end
+    check:SetScript("OnEnter", function(self)
+        ShowSettingsRowTip(self, tooltipTitle, tipBody())
     end)
-    tipFrame:SetScript("OnLeave", function()
-        if GameTooltip then
+    check:SetScript("OnLeave", function()
+        if GameTooltip and GameTooltip.GetOwner and GameTooltip:GetOwner() == check then
             GameTooltip:Hide()
         end
     end)
 
     check:SetScript("OnClick", function(self)
-        if not self:IsEnabled() then
-            self:SetChecked(not self:GetChecked())
+        if self.ahdrhLocked then
+            self:SetChecked(self.ahdrhSaved == true)
             return
         end
         local checked = self:GetChecked() and true or false
@@ -2209,40 +2226,37 @@ local function BuildSettingsPanel()
         end
     end)
 
-    local dressHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
-    dressHeader:SetPoint("TOPLEFT", 16, -56)
+    local dressHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    dressHeader:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -56)
     dressHeader:SetText("Dressing Room")
 
     local closeRow
     settingsCloseCheck, closeRow = CreateSettingsCheckboxRow(
         panel,
         dressHeader,
-        -8,
+        -6,
         SETTINGS_CLOSE_LABEL,
         SETTINGS_CLOSE_LABEL,
         SETTINGS_CLOSE_TIP,
         function(checked)
-            InitDB()
-            AHDressingRoomHelperDB[DB_CLOSE_KEY] = checked
+            WriteSavedOption(DB_CLOSE_KEY, checked)
         end
     )
 
-    local ahHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
-    ahHeader:SetPoint("TOPLEFT", closeRow, "BOTTOMLEFT", -8, -20)
+    local ahHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    ahHeader:SetPoint("TOPLEFT", closeRow, "BOTTOMLEFT", 0, -18)
     ahHeader:SetText("Auction House")
 
     local dimRow
     settingsDimCheck, dimRow = CreateSettingsCheckboxRow(
         panel,
         ahHeader,
-        -8,
+        -6,
         SETTINGS_DIM_LABEL,
         SETTINGS_DIM_LABEL,
-        SETTINGS_DIM_LABEL,
-        DimCheckboxTooltip,
+        DimTipBody,
         function(checked)
-            InitDB()
-            AHDressingRoomHelperDB[DB_DIM_KEY] = checked
+            WriteSavedOption(DB_DIM_KEY, checked)
             if RequestDimRefresh then
                 RequestDimRefresh()
             end
@@ -2261,17 +2275,31 @@ local function BuildSettingsPanel()
         InitDB()
         RefreshUnsupportedLabel()
         if settingsCloseCheck then
-            settingsCloseCheck:SetChecked(AHDressingRoomHelperDB[DB_CLOSE_KEY] == true)
+            local closeOn = AHDressingRoomHelperDB[DB_CLOSE_KEY] == true
+            settingsCloseCheck.ahdrhLocked = false
+            settingsCloseCheck.ahdrhSaved = closeOn
+            settingsCloseCheck:SetChecked(closeOn)
+            settingsCloseCheck:Enable()
+            if settingsCloseCheck.label then
+                settingsCloseCheck.label:SetFontObject("GameFontHighlight")
+            end
         end
         if settingsDimCheck then
             local blocked = unsupportedLabel ~= nil
-            settingsDimCheck:SetEnabled(not blocked)
-            settingsDimCheck:SetChecked(not blocked and AHDressingRoomHelperDB[DB_DIM_KEY] == true)
+            local dimOn = AHDressingRoomHelperDB[DB_DIM_KEY] == true
+            settingsDimCheck.ahdrhSaved = dimOn
+            settingsDimCheck.ahdrhLocked = blocked
+            settingsDimCheck:SetChecked(dimOn)
+            if blocked then
+                settingsDimCheck:Disable()
+            else
+                settingsDimCheck:Enable()
+            end
             if settingsDimCheck.label then
                 if blocked then
-                    settingsDimCheck.label:SetTextColor(0.5, 0.5, 0.5)
+                    settingsDimCheck.label:SetFontObject("GameFontDisable")
                 else
-                    settingsDimCheck.label:SetTextColor(1, 0.82, 0)
+                    settingsDimCheck.label:SetFontObject("GameFontHighlight")
                 end
             end
         end
@@ -2292,6 +2320,10 @@ local function BuildSettingsPanel()
         -- Blizzard's panel Defaults button is hidden for canvas categories.
         -- Our Defaults button uses SETTINGS_RESET_POPUP instead.
     end
+
+    panel:SetScript("OnShow", function(self)
+        self:OnRefresh()
+    end)
 
     panel:OnRefresh()
     settingsPanel = panel
