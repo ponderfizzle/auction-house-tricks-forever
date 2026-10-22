@@ -39,7 +39,6 @@ local settingsCategory
 local settingsPanel
 local settingsCloseCheck
 local settingsDimCheck
-local settingsDimNote
 local settingsRegistered = false
 local settingsFailed = false
 local closeDressingRoomQueued = false
@@ -506,7 +505,10 @@ local function RaiseHolder(ahFrame)
     end
 end
 
--- Browse and item detail share this. Never leave the search-to-Filter gap.
+-- Padding on each side of the Hide tooltips control inside the search-to-Filter
+-- gap. The search box may be narrowed, but not below SEARCH_BOX_MIN_WIDTH.
+local SEARCH_ROW_MARGIN = 4
+local SEARCH_BOX_MIN_WIDTH = 120
 
 -- Category browse hides its refresh row (hideRefreshFrame) and has no Back
 -- button. Column headers start just under the search bar, so the results
@@ -589,26 +591,100 @@ local function ScreenGapToLocal(leftFrame, rightEdge, leftEdge)
     return (rightEdge - leftEdge) / scale
 end
 
--- Center the checkbox and its label together between the search box and
--- Filter. Parent stays SearchBar, so Browse, item detail, and Back share
--- one anchor. A tight gap still uses this spot; it is never moved left of
--- the favorites star. A 2px label gap keeps the pair inside Forever's row.
+local function SearchBoxWidth(box)
+    if not box or not box.GetWidth then
+        return nil
+    end
+    local width = box:GetWidth()
+    if type(width) == "number" and width > 0 and not IsSecret(width) then
+        return width
+    end
+    return nil
+end
+
+local function RestoreSearchBoxWidth(bar)
+    if not bar or not bar.SearchBox then
+        return
+    end
+    local base = bar.ahdrhSearchWidthBaseline
+    if type(base) == "number" and bar.SearchBox.SetWidth then
+        bar.SearchBox:SetWidth(base)
+    end
+end
+
+-- Center checkbox + label between SearchBox and Filter. Narrows the search box
+-- when the measured gap is too small, then centers with side margins.
 local function PlaceCenteredInSearchGap(bar)
     if not bar or not bar.SearchBox or not bar.FilterButton then
         return nil
     end
-    holder:SetParent(bar)
-    LayoutHorizontal(2)
     local box = bar.SearchBox
     local filter = bar.FilterButton
-    local boxRight = box.GetRight and box:GetRight()
-    local filterLeft = filter.GetLeft and filter:GetLeft()
+
+    if not bar.ahdrhSearchWidthBaseline then
+        local base = SearchBoxWidth(box)
+        if base then
+            bar.ahdrhSearchWidthBaseline = base
+        end
+    elseif bar.ahdrhSearchWidthBaseline and box.SetWidth then
+        box:SetWidth(bar.ahdrhSearchWidthBaseline)
+    end
+
+    holder:SetParent(bar)
+    LayoutHorizontal(2)
     local width = holder:GetWidth()
-    if not boxRight or not filterLeft or not width or width < 1 then
+    if not width or width < 1 then
         return nil
     end
-    local gap = ScreenGapToLocal(holder, filterLeft, boxRight)
+
+    local margin = SEARCH_ROW_MARGIN
+    local needed
+    local gap
+    for _ = 1, 4 do
+        local boxRight = box.GetRight and box:GetRight()
+        local filterLeft = filter.GetLeft and filter:GetLeft()
+        if not boxRight or not filterLeft then
+            return nil
+        end
+        gap = ScreenGapToLocal(holder, filterLeft, boxRight)
+        needed = width + margin * 2
+        if gap >= needed then
+            break
+        end
+        local deficit = needed - gap
+        local boxScale = box.GetEffectiveScale and box:GetEffectiveScale() or 1
+        if boxScale == 0 then
+            boxScale = 1
+        end
+        local shrink = deficit / boxScale
+        local current = SearchBoxWidth(box) or bar.ahdrhSearchWidthBaseline or 200
+        local nextWidth = current - shrink
+        if nextWidth < SEARCH_BOX_MIN_WIDTH then
+            nextWidth = SEARCH_BOX_MIN_WIDTH
+        end
+        if nextWidth >= current - 0.5 then
+            break
+        end
+        box:SetWidth(nextWidth)
+    end
+
+    local boxRight = box.GetRight and box:GetRight()
+    local filterLeft = filter.GetLeft and filter:GetLeft()
+    if not boxRight or not filterLeft then
+        return nil
+    end
+    gap = ScreenGapToLocal(holder, filterLeft, boxRight)
     local offset = (gap - width) / 2
+    if offset < margin then
+        offset = margin
+    end
+    local maxOffset = gap - margin - width
+    if maxOffset < margin then
+        maxOffset = margin
+    end
+    if offset > maxOffset then
+        offset = maxOffset
+    end
     if offset < 0 then
         offset = 0
     end
@@ -638,6 +714,9 @@ PlaceCheckbox = function(ahFrame)
         end
     end
 
+    if bar then
+        RestoreSearchBoxWidth(bar)
+    end
     holder:SetParent(ahFrame)
     LayoutHorizontal()
     AnchorFooter(ahFrame)
@@ -721,9 +800,20 @@ local function AttachCheckbox(ahFrame)
     end
 
     ahFrame:HookScript("OnShow", ResetToggle)
+    ahFrame:HookScript("OnShow", function()
+        PlaceCheckbox(ahFrame)
+        if C_Timer and type(C_Timer.After) == "function" then
+            C_Timer.After(0, function()
+                PlaceCheckbox(ahFrame)
+            end)
+        end
+    end)
     ahFrame:HookScript("OnHide", ResetToggle)
     ahFrame:HookScript("OnHide", function()
         CloseDressingRoomWithAuctionHouse()
+        if ahFrame.SearchBar then
+            RestoreSearchBoxWidth(ahFrame.SearchBar)
+        end
         if RequestDimRefresh then
             RequestDimRefresh()
         end
@@ -826,33 +916,11 @@ end
 -- adapter that runs only when that add-on is loaded. A generic bag+slot
 -- scan covers a button the adapters miss.
 --
--- A known unsupported bag add-on grays out the setting and skips dimming.
--- The saved checkbox value is left alone. Any unexpected error stops
--- dimming for this session, restores what we changed, and prints once.
+-- Any unexpected error stops dimming for this session, restores what we
+-- changed, and prints once. Nothing in this path raises a Lua error popup.
 -- ---------------------------------------------------------------------------
 
 local DIM_ALPHA = 0.35
-local DIM_DESCRIPTION = "While the Auction House Sell tab is open, dims bag items that can't be listed."
-local SUPPORTED_BAGS = "default bags, Bagnon, Bagnonium, Baganator, AdiBags, BetterBags, ArkInventory"
-
--- Folder names (the name C_AddOns.IsAddOnLoaded expects), plus a short label
--- used when the TOC title cannot be read. These UIs replace the bag buttons
--- in ways this add-on does not hook.
-local UNSUPPORTED_BAG_ADDONS = {
-    { name = "Inventorian", label = "Inventorian" },
-    { name = "LiteBag", label = "LiteBag" },
-    { name = "Sorted", label = "Sorted" },
-    { name = "cargBags", label = "cargBags" },
-    { name = "cargBags_Nivaya", label = "cargBags Nivaya" },
-    { name = "cargBags_Smoof", label = "cargBags Smoof" },
-    { name = "cargBags_Simplicity", label = "cargBags Simplicity" },
-    { name = "Baggins", label = "Baggins" },
-    { name = "BaudBag", label = "BaudBag" },
-    { name = "OneBag", label = "OneBag" },
-    { name = "OneBag3", label = "OneBag3" },
-    { name = "ElvUI", label = "ElvUI" },
-    { name = "Tukui", label = "Tukui" },
-}
 
 local SELL_PANE_KEYS = {
     "ItemSellFrame",
@@ -880,7 +948,6 @@ local seenButtons = setmetatable({}, { __mode = "k" })
 local hookedButtons = setmetatable({}, { __mode = "k" })
 local hookedContainers = setmetatable({}, { __mode = "k" })
 local passButtons = {}
-local unsupportedLabel
 local dimSessionDisabled = false
 local dimCombatQueued = false
 local dimRestoring = false
@@ -903,54 +970,6 @@ local function PlainString(value)
     return value
 end
 
-local function AddonEnableState(name)
-    local function active(state)
-        if IsSecret(state) then
-            return false
-        end
-        if state == true then
-            return true
-        end
-        if type(state) == "number" and state > 0 then
-            return true
-        end
-        return false
-    end
-    local character
-    if type(UnitName) == "function" then
-        local ok, value = pcall(UnitName, "player")
-        if ok then
-            character = PlainString(value)
-        end
-    end
-    if C_AddOns and type(C_AddOns.GetAddOnEnableState) == "function" then
-        local attempts = {
-            function() return C_AddOns.GetAddOnEnableState(name, character) end,
-            function() return C_AddOns.GetAddOnEnableState(character, name) end,
-            function() return C_AddOns.GetAddOnEnableState(name) end,
-        }
-        for i = 1, #attempts do
-            local ok, state = pcall(attempts[i])
-            if ok and active(state) then
-                return true
-            end
-        end
-    end
-    if type(GetAddOnEnableState) == "function" then
-        local ok, state = pcall(GetAddOnEnableState, character, name)
-        if ok and active(state) then
-            return true
-        end
-        ok, state = pcall(GetAddOnEnableState, name)
-        if ok and active(state) then
-            return true
-        end
-    end
-    return false
-end
-
--- Loaded, or enabled for this character even if it has not finished loading.
--- "No bag add-on" is not a block. Only names on the unsupported list are.
 local function AddonLoaded(name)
     if C_AddOns and type(C_AddOns.IsAddOnLoaded) == "function" then
         local ok, loaded = pcall(C_AddOns.IsAddOnLoaded, name)
@@ -965,67 +984,6 @@ local function AddonLoaded(name)
         end
     end
     return false
-end
-
-local function AddonIsActive(name)
-    if AddonLoaded(name) then
-        return true
-    end
-    return AddonEnableState(name)
-end
-
-local function AddonTitle(entry)
-    local title
-    if C_AddOns and type(C_AddOns.GetAddOnMetadata) == "function" then
-        local ok, value = pcall(C_AddOns.GetAddOnMetadata, entry.name, "Title")
-        if ok then
-            title = PlainString(value)
-        end
-    elseif type(GetAddOnMetadata) == "function" then
-        local ok, value = pcall(GetAddOnMetadata, entry.name, "Title")
-        if ok then
-            title = PlainString(value)
-        end
-    end
-    if title then
-        title = title:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-        title = title:gsub("^%s+", ""):gsub("%s+$", "")
-        if title ~= "" then
-            return title
-        end
-    end
-    return entry.label
-end
-
-local function RefreshUnsupportedLabel()
-    local found = {}
-    for i = 1, #UNSUPPORTED_BAG_ADDONS do
-        local entry = UNSUPPORTED_BAG_ADDONS[i]
-        if AddonIsActive(entry.name) then
-            found[#found + 1] = AddonTitle(entry)
-        end
-    end
-    if #found == 0 then
-        unsupportedLabel = nil
-    else
-        unsupportedLabel = table.concat(found, ", ")
-    end
-end
-
-local function UnsupportedBagLabel()
-    return unsupportedLabel
-end
-
-local function DimBlockedTooltip(label)
-    return "Not available with " .. label .. ". Supported: " .. SUPPORTED_BAGS .. "."
-end
-
-local function DimTipBody()
-    RefreshUnsupportedLabel()
-    if unsupportedLabel then
-        return DIM_DESCRIPTION .. " " .. DimBlockedTooltip(unsupportedLabel)
-    end
-    return DIM_DESCRIPTION
 end
 
 local function DimSavedOn()
@@ -1142,7 +1100,7 @@ local function SellTabIsSelected()
 end
 
 local function ShouldDimBags()
-    if dimSessionDisabled or unsupportedLabel then
+    if dimSessionDisabled then
         return false
     end
     if not DimSavedOn() or not AuctionHouseIsOpen() then
@@ -1486,7 +1444,7 @@ local function DimSessionFailed()
     dimTickerOn = false
     dimActive = false
     pcall(ClearAllDims)
-    print("AH Dressing Room Helper: item dimming turned off — bag add-on not supported")
+    print("AH Dressing Room Helper: item dimming turned off for this session (/reload to try again).")
 end
 
 local function NoteDimFailure()
@@ -2049,7 +2007,6 @@ end
 
 local dimRefreshQueued = false
 RequestDimRefresh = function()
-    RefreshUnsupportedLabel()
     if dimSessionDisabled or not ShouldDimBags() then
         dimEpoch = dimEpoch + 1
         dimTickerOn = false
@@ -2087,7 +2044,9 @@ end
 local SETTINGS_RESET_POPUP = "AHDRESSINGROOMHELPER_RESET_SETTINGS"
 local SETTINGS_CLOSE_LABEL = "Close Dressing Room with Auction House"
 local SETTINGS_DIM_LABEL = "Dim unsellable items when Sell tab selected"
-local SETTINGS_CLOSE_TIP = "When checked, closing the auction house also closes the Dressing Room. The close button, walking away, and other close paths all count. Leave this off and the Dressing Room stays up."
+local SETTINGS_CLOSE_TIP = "When this is enabled, the Dressing Room closes when the Auction House closes, including when you click the X or walk away."
+local SETTINGS_DIM_TIP = "When this is enabled, bag items that can't be listed on the Auction House (such as Soulbound items) are dimmed while the Sell tab is selected."
+local SETTINGS_DIM_WARNING = " This setting may not be compatible with your bag add-on if you use one. If it can't dim your bags, dimming turns itself off until you /reload."
 
 local function ResetHelperSettingsToDefaults()
     InitDB()
@@ -2122,14 +2081,37 @@ local function EnsureSettingsResetPopup()
     }
 end
 
-local function ShowSettingsRowTip(owner, title, body)
+local function OrangeWarningPrefix()
+    local hex = "ffff8040"
+    if ORANGE_FONT_COLOR then
+        if ORANGE_FONT_COLOR.GenerateHexColor then
+            hex = ORANGE_FONT_COLOR:GenerateHexColor()
+        elseif ORANGE_FONT_COLOR.GetRGB then
+            local r, g, b = ORANGE_FONT_COLOR:GetRGB()
+            hex = string.format("ff%02x%02x%02x", r * 255, g * 255, b * 255)
+        end
+    end
+    if type(WrapTextInColorCode) == "function" then
+        return WrapTextInColorCode("Warning!", hex)
+    end
+    return "|c" .. hex .. "Warning!|r"
+end
+
+local function ShowSettingsRowTip(owner, title, description, warningTail)
     if not GameTooltip or not owner then
         return
     end
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
-    GameTooltip:SetText(title, 1, 1, 1)
-    if type(body) == "string" and body ~= "" and body ~= title then
-        GameTooltip:AddLine(body, 0.9, 0.9, 0.9, true)
+    local tr, tg, tb = 1, 0.82, 0
+    if NORMAL_FONT_COLOR and NORMAL_FONT_COLOR.GetRGB then
+        tr, tg, tb = NORMAL_FONT_COLOR:GetRGB()
+    end
+    GameTooltip:SetText(title, tr, tg, tb, true)
+    if type(description) == "string" and description ~= "" then
+        GameTooltip:AddLine(description, 1, 1, 1, true)
+    end
+    if type(warningTail) == "string" and warningTail ~= "" then
+        GameTooltip:AddLine(OrangeWarningPrefix() .. warningTail, 1, 1, 1, true)
     end
     GameTooltip:Show()
 end
@@ -2142,7 +2124,7 @@ end
 -- Both saved rows use this. onClick receives the new boolean and writes the
 -- same DB table OnRefresh reads. A full-row mouse frame is not used: it sat
 -- on top of the checkbox and anchored the tooltip to the panel's right edge.
-local function CreateSettingsCheckboxRow(parent, anchorTo, yOffset, labelText, tooltipTitle, tooltipBody, onClick)
+local function CreateSettingsCheckboxRow(parent, anchorTo, yOffset, labelText, tooltipTitle, tooltipBody, onClick, tooltipWarning)
     local row = CreateFrame("Frame", nil, parent)
     row:SetPoint("TOPLEFT", anchorTo, "BOTTOMLEFT", 0, yOffset)
     row:SetPoint("RIGHT", parent, "RIGHT", -32, 0)
@@ -2175,7 +2157,7 @@ local function CreateSettingsCheckboxRow(parent, anchorTo, yOffset, labelText, t
         return tooltipBody
     end
     check:SetScript("OnEnter", function(self)
-        ShowSettingsRowTip(self, tooltipTitle, tipBody())
+        ShowSettingsRowTip(self, tooltipTitle, tipBody(), tooltipWarning)
     end)
     check:SetScript("OnLeave", function()
         if GameTooltip and GameTooltip.GetOwner and GameTooltip:GetOwner() == check then
@@ -2254,26 +2236,18 @@ local function BuildSettingsPanel()
         -6,
         SETTINGS_DIM_LABEL,
         SETTINGS_DIM_LABEL,
-        DimTipBody,
+        SETTINGS_DIM_TIP,
         function(checked)
             WriteSavedOption(DB_DIM_KEY, checked)
             if RequestDimRefresh then
                 RequestDimRefresh()
             end
-        end
+        end,
+        SETTINGS_DIM_WARNING
     )
-
-    settingsDimNote = panel:CreateFontString(nil, "ARTWORK", "GameFontDisable")
-    settingsDimNote:SetJustifyH("LEFT")
-    settingsDimNote:SetJustifyV("TOP")
-    settingsDimNote:SetWordWrap(true)
-    settingsDimNote:SetPoint("TOPLEFT", dimRow, "BOTTOMLEFT", 40, -4)
-    settingsDimNote:SetPoint("RIGHT", panel, "RIGHT", -32, 0)
-    settingsDimNote:Hide()
 
     function panel:OnRefresh()
         InitDB()
-        RefreshUnsupportedLabel()
         if settingsCloseCheck then
             local closeOn = AHDressingRoomHelperDB[DB_CLOSE_KEY] == true
             settingsCloseCheck.ahdrhLocked = false
@@ -2285,30 +2259,13 @@ local function BuildSettingsPanel()
             end
         end
         if settingsDimCheck then
-            local blocked = unsupportedLabel ~= nil
             local dimOn = AHDressingRoomHelperDB[DB_DIM_KEY] == true
             settingsDimCheck.ahdrhSaved = dimOn
-            settingsDimCheck.ahdrhLocked = blocked
+            settingsDimCheck.ahdrhLocked = false
             settingsDimCheck:SetChecked(dimOn)
-            if blocked then
-                settingsDimCheck:Disable()
-            else
-                settingsDimCheck:Enable()
-            end
+            settingsDimCheck:Enable()
             if settingsDimCheck.label then
-                if blocked then
-                    settingsDimCheck.label:SetFontObject("GameFontDisable")
-                else
-                    settingsDimCheck.label:SetFontObject("GameFontHighlight")
-                end
-            end
-        end
-        if settingsDimNote then
-            if unsupportedLabel then
-                settingsDimNote:SetText(DimBlockedTooltip(unsupportedLabel))
-                settingsDimNote:Show()
-            else
-                settingsDimNote:Hide()
+                settingsDimCheck.label:SetFontObject("GameFontHighlight")
             end
         end
     end
@@ -2418,7 +2375,6 @@ function eventFrame:ADDON_LOADED(loaded)
     if loaded == "Blizzard_AuctionHouseUI" then
         TryAttach()
     end
-    RefreshUnsupportedLabel()
     if settingsPanel and settingsPanel.OnRefresh then
         settingsPanel:OnRefresh()
     end
@@ -2457,7 +2413,6 @@ end
 function eventFrame:PLAYER_LOGIN()
     InstallHooks()
     InitDB()
-    RefreshUnsupportedLabel()
     RegisterSettings()
     if settingsPanel and settingsPanel.OnRefresh then
         settingsPanel:OnRefresh()
