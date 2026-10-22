@@ -1,0 +1,276 @@
+# Forever API ledger
+
+The single place where auctionhouse.fyi records what is known about the WoW: Forever APIs and client behaviours the addon (`addon/AuctionHouseFYI/`) and the desktop app rely on, and how it is known (AGENTS.md rule 2). Code cites this file. Update it whenever a `/dump`, probe or source read settles something.
+
+Rows marked (wowzers) are copied from wowzers' ledger (`docs/forever-api-ledger.md` at `31a5fc3`) with their evidence status unchanged: wowzers' in-game observations are Jared's, on his client, with wowzers' addon. Everything new to this project is UNVERIFIED until Jared runs the checks at the end.
+
+Evidence tags:
+
+- `in-game`: run on our own client (Jared's). Record the build and date.
+- `measured`: someone else ran it on a live Forever client and published the result.
+- `source`: Blizzard's Forever-branch UI source or its generated API docs.
+- `community`: a single report, not independently confirmed.
+- `UNVERIFIED`: inferred. Must not be relied on until upgraded.
+- `local`: observed on a dev machine's disk, registry or process list (outside the client).
+
+Not evidence: memory, LuaLS/Ketho autocomplete, Retail wiki pages, a Retail checkmark, `WOW_PROJECT_ID == 1`.
+
+Client under test (wowzers): beta 1.60.1, builds 69893 → 69913 → 69977 → 70009. Interface 16001. Beta folder `World of Warcraft\_classic_beta_\`, exe `WowB.exe`.
+
+## Client identity (wowzers)
+
+| Fact | Status | Evidence |
+| --- | --- | --- |
+| `select(4, GetBuildInfo())` = `16001` | confirmed | measured (imperial64, Thunderz96) |
+| `WOW_PROJECT_ID` = 1 (same as Retail); no `WOW_PROJECT_FOREVER` | confirmed | measured + source |
+| API family: Retail Mainline, a superset of 12.1.5, with Midnight secret-value rules fully active | confirmed | source, plus Blizzard's statement of 2026-09-15 |
+| Lua: plain 5.1 interpreter (no LuaJIT) | confirmed | measured (imperial64) |
+
+## The strip (`Main.lua`, `Core/Strip.lua`, `protocol/strip-v1.md`)
+
+| API or behaviour | Exists | Works as we use it | Evidence / notes |
+| --- | --- | --- | --- |
+| `GetPhysicalScreenSize`, `Texture:SetColorTexture`, `SetSnapToPixelGrid`, `SetTexelSnappingBias`, `Region:SetIgnoreParentScale` | yes | UNVERIFIED for exact-pixel output | (wowzers) source. wowzers paints its strip the same way; its desktop app reads it (Jared's client, 2026-09-25 onward), which is the only evidence the recipe works on Forever: a different addon, not this one. |
+| The bulk strip: 512 textures repainted ~10 times a second while a transfer runs | n/a | UNVERIFIED | (wowzers) frame cost unmeasured. |
+| Our strip at `(0, 6 × K)` when the Wowzers addon is loaded, beside wowzers' at `(0, 0)` and its bulk strip below | n/a | UNVERIFIED | New (2026-09-29). `C_AddOns.IsAddOnLoaded("Wowzers")` at `PLAYER_LOGIN` decides; both strips must be inside the app's 512 × 64 search box, and the app's locator skips a strip whose first data byte isn't `0x46` (spec: `protocol/strip-v1.md` "Placement", "Our strip only"; tests: `lua_addon::beside_wowzers_it_stands_down_and_moves_its_strip`). |
+| `C_AddOns.IsAddOnLoaded(name)` | yes | UNVERIFIED | source (`AddOnsDocumentation.lua`). Used for `Wowzers` (stand down) and `AuctionHouseFYI_App` (scan by default). |
+| The game window's title is exactly `World of Warcraft` (the app finds it with `FindWindowW`; window lookup only) | UNVERIFIED | UNVERIFIED | (wowzers) Retail/Classic convention. Fallback: `search_rect` in `config.toml`, then the primary monitor's top-left 512 × 64. |
+| Forever under Wine on Omarchy: window title/class, unfiltered strip pixels, and native Wayland capture | backend source + offline compositor tests | UNVERIFIED in game | Added 2026-10-08. Hyprland exposes wlr-screencopy region capture and read-only IPC requests. The companion uses logical coordinates, physical pixel buffers and title/class heuristics, with a configured rectangle fallback. Headless Sway smoke tests decode a synthetic book through 100 captures per case: all eight transforms at 1×, and normal/90° at 1.5× and 2×. Padded/inverted 8/10-bit buffers have offline decoder/tracker tests. None observes Forever/Wine or Linux HDR; setup and exact in-game steps: Linux capture. |
+
+## Capture facts (outside the client) (wowzers)
+
+| Fact | Status | Evidence |
+| --- | --- | --- |
+| With Windows HDR on, legacy 8-bit DXGI duplication tone-maps SDR content: `40/80/C0` → `4E/9A/E6` | measured on wowzers' dev machine (2026-09-24) | `companion/examples/strip_loopback.rs` in wowzers |
+| FP16 duplication of SDR content = `srgb_to_linear(byte) × white` exactly, so bytes are recoverable | measured, same machine | loopback: 398 frames accepted, 0 mismatches |
+| WoW's swapchain is composed under HDR the same way as a GDI window | UNVERIFIED | needs an in-game capture |
+
+## Prices files (`Prices.lua`, `Core/Prices.lua`, `Data/Prices.lua`, `AuctionHouseFYI_App`; `protocol/link-v1.md`)
+
+No mid-session delivery (Jared, 2026-09-29): the two tables are ordinary addon files read when the UI loads.
+
+| API or behaviour | Exists | Works as we use it | Evidence / notes |
+| --- | --- | --- | --- |
+| `/reload` re-reads a TOC-listed addon `.lua` whose contents changed on disk; only files and folders that existed at client launch are found | yes (reported) | not measured by us | (wowzers) three independent reports (wow-forever-codex on 69913, wow-claude, ForeverSVFix). The desktop app rewrites `AuctionHouseFYI_App\Prices.lua` in place and relies on this. |
+| A `.toc` edit or a new addon folder needs a full client restart | yes | measured | (wowzers, "Behavior gotchas"). So `AuctionHouseFYI_App` counts from the client start after the app created it. |
+| An ordinary addon with `## Dependencies: AuctionHouseFYI` loads after ours, so its global is set by `PLAYER_LOGIN` | expected | UNVERIFIED | Retail load order (a dependency loads first); not observed on Forever. |
+| `PLAYER_LOGIN` fires after every non-load-on-demand addon ran, on login and on `/reload` | expected | UNVERIFIED | source (FrameXML registers it); not observed on Forever. The addon also re-picks the market at `PLAYER_ENTERING_WORLD` if the faction read nil. |
+| A data-only Lua file of a few MB with long string literals (the release `Data/Prices.lua`: 6 markets, pages of up to 4096 characters) parses at login without a visible hitch | n/a | UNVERIFIED | Lua 5.1 keeps a string literal as one constant, so a file stays far below the 2¹⁸ constants a chunk may hold (numbers would not). wowzers ships a 2.8 MB `Data/Items.lua` that loads. Load time unmeasured: `/dump collectgarbage("count")` before and after. |
+| `UnitFactionGroup("player")` picks the market | yes | UNVERIFIED | (wowzers) source (`UnitDocumentation.lua`). |
+| `GetServerTime()` → unix seconds | yes | UNVERIFIED | (wowzers) source (`SystemTimeDocumentation.lua`). |
+| SavedVariables loading on a cold start | broken on beta (69977 included) | measured by many | (wowzers, "Things that do NOT work"). Files are written and never read back; `/reload` hides it. So the ruleset choice (`/ahf ruleset`) lasts until the client exits, and every setting has a default in code (the app's file carries the scan settings). |
+
+## Auction house (wowzers, "Auction house (research only)")
+
+| API or behaviour | Exists | Works as we'd use it | Evidence / notes |
+| --- | --- | --- | --- |
+| The modern auction house: `Blizzard_AuctionHouseUI` + `C_AuctionHouse` | yes | UNVERIFIED | source; measured (imperial64): 85 `C_AuctionHouse` functions. |
+| Classic `QueryAuctionItems`, `GetAuctionItemInfo`, `CanSendAuctionQuery` | no | n/a | source + measured (imperial64): 0 of 8 legacy functions present. |
+| `SendBrowseQuery`, `RequestMoreBrowseResults`, `GetBrowseResults`, `HasFullBrowseResults`, `AUCTION_HOUSE_BROWSE_RESULTS_UPDATED`/`_ADDED` | yes | UNVERIFIED | source; measured (imperial64 §P.15/16): one empty browse returned the whole beta market (680 item keys) in ~3 s, 500 per page. |
+| `C_AuctionHouse.IsThrottledMessageSystemReady()` | yes | VERIFIED exists and reports it 2026-09-28 | Jared (wowzers): after a few manual searches plus an automatic full browse of a ~72,000-auction market, the Browse list showed nothing; the call returned `false` for minutes, through closing and reopening; a relog cleared it. Events: each search fired `AUCTION_HOUSE_THROTTLED_MESSAGE_SENT` then `…_SYSTEM_READY` 0.26–0.33 s later. `_MESSAGE_QUEUED`/`_DROPPED` didn't fire (not throttled then). |
+| `ReplicateItems`, `GetNumReplicateItems`, `GetReplicateItemInfo`/`Link`/`TimeLeft`, `REPLICATE_ITEM_LIST_UPDATE` | yes | UNVERIFIED | source; measured (imperial64): throttled between 162 s and 1047 s; a throttled call fails silently (no event, count 0); owner names nil. |
+| Secret values or restrictions on the read calls | none | n/a | source: no `SecretReturns`; `HasRestrictions` only on the seven write calls. The addon never calls those. |
+| Time-left bands | 3 (30 min, 2 h, 12 h) | n/a | measured (imperial64). |
+| One auction house per ruleset and faction | UNVERIFIED | n/a | community (AHledger's guide). The market ids assume it. |
+
+### Buy orders versus auction bids (research, 2026-10-01)
+
+Source checked: Forever generated auction API and Forever item-buy UI. These are source evidence, not a new in-game observation.
+
+- `GetReplicateItemInfo(i)` declares numeric returns 8 = `minBid`, 9 = `minIncrement`, 10 = `buyoutPrice`, 11 = `bidAmount`. Existence is source-confirmed; populated values and their exact behavior on our Forever client remain UNVERIFIED. The scanner now optionally reads these three numeric bid fields through `plain`, with missing/secret/invalid values left unknown. Strip-v1 kind 5 wraps the unchanged kind-3 book with bid-detail rows; kind 3 still has no bid-price fields. Its zero-price entries count auctions without buyouts, not buyer orders.
+- `GetItemSearchResultInfo` declares `minBid`, `bidAmount` and `buyoutAmount` on a particular auction. The item-buy UI selects an existing `auctionID` before bidding/buying. `PostItem` declares seller bid/buyout prices; `PostCommodity` declares a unit price. No standing buy-order posting or public buy-order-book API was found in the generated API. The inference is that the available market is seller listings with bids attached to individual auctions, rather than an exchange with independent bids and asks. This does not prove that every beta server behavior matches the source.
+- The website shows buyout depth plus optional current bids and minimum bidding prices on listed auctions. Starting bids are seller terms, not observed buyer demand; current bids are not independently fillable buy orders or a complete bidding history. Do not label these as a two-sided exchange book. Missing bid detail does not stop buyout capture. Never collect bidder or seller identity.
+
+Pending in-game check: open an auctioneer with the existing addon, wait for `/ahf status` to report a completed book, then inspect only the numeric bid field of the first replicated auction:
+
+```lua
+/dump (function() local v=select(11,C_AuctionHouse.GetReplicateItemInfo(0)); if issecretvalue(v) then return "secret" end return v end)()
+
+```
+
+Repeat on a replication containing an auction with a known current bid; a zero on one row does not establish that bids are unavailable. Record client build and values before upgrading the status.
+
+Offline evidence (2026-10-01): real Lua 5.1 kind-5 encoding matches versioned fixture bytes, then Rust decodes the numeric bid fields; fake-client screen capture passes the bid book through the actual pixel decoder/tracker; uploader and retry queue retain the sidecar. API/storage tests preserve unknown versus zero and reject bid rows outside the base book. Bid-only changes do not alter buyout-based volume estimates. These prove software paths, not live Forever responses.
+
+Standalone activation: strip textures and heartbeat are created only when the desktop helper addon is loaded at `PLAYER_LOGIN`. Helper presence is independent of pairing, account or tiers, and no addon export toggle exists. The helper load-order mechanism already has source evidence above, but the new activation behavior remains UNVERIFIED in game. A full client restart is required for this change's TOC update or a newly installed helper folder. Test the free ZIP alone with `/ahf status`, `/ahf pixel`, `/ahf scan` (export and scans off; tooltip prices available), then install the desktop app/helper, restart, repeat commands, open an auctioneer and check BugSack. Compare exported bids with a known auction's current/starting bid and time left. No automated bidding or purchases are involved.
+
+## Auction scans (`Auction.lua`, `Core/Auction.lua`; strip-v1 transfers 2 and 3) (wowzers rows)
+
+| API or behaviour | Exists | Works as we use it | Evidence / notes |
+| --- | --- | --- | --- |
+| Events `AUCTION_HOUSE_SHOW`, `_CLOSED`, `_BROWSE_RESULTS_UPDATED`, `_ADDED`, `_BROWSE_FAILURE` | yes | UNVERIFIED | source (`AuctionHouseDocumentation.lua`). |
+| `SendBrowseQuery({searchString = "", sorts = {}, filters = {}})` from addon code | yes | UNVERIFIED | source; measured (imperial64): that call returned 680 keys. |
+| `GetBrowseResults()` → `{itemKey = {itemID, itemLevel, itemSuffix, battlePetSpeciesID}, totalQuantity, minPrice}` | yes | UNVERIFIED | source; `minPrice` a plain number in imperial64's dump. |
+| Random suffixes are item bonus lists; `itemKey.itemSuffix` is the suffix's `ItemNameDescription` id | yes | VERIFIED 2026-09-28 | Jared (wowzers): "of the Physician" → `itemSuffix=14328`; one Browse row per suffix. |
+| A real auction's link carries the variant's bonus list (`…:1:12918…` = "of Magic") | yes | VERIFIED 2026-09-28 for `GetItemSearchResultInfo(...).itemLink` | Jared (wowzers). `GetReplicateItemLink` is assumed to give the same links: UNVERIFIED (the addon's `/ahf status` "links:" line counts it). |
+| The game's window sends its own browse on show when the player has favourites | yes | n/a (source) | The opening check yields to the window handlers, then requests replication as soon as the message system is ready. The old fixed 2 s browse delay is removed; replication does not change the Browse list. |
+| `hooksecurefunc(C_AuctionHouse, "SendBrowseQuery" / "SearchForFavorites" / "SearchForItemKeys", fn)` | expected | UNVERIFIED | A post-hook on a table field. |
+| `GetReplicateItemInfo(i)` returns 3, 10, 17 = `count`, `buyoutPrice`, `itemID`; 0-based indices | yes | UNVERIFIED | source; the addon never reads the owner or bidder returns. |
+| `AUCTION_HOUSE_THROTTLED_MESSAGE_QUEUED` / `_DROPPED` fire when throttled | yes | UNVERIFIED | source. The scanner treats them as signs of the throttle. |
+| Rescans while the window stays open (every `stale`) never trip the throttle | n/a | UNVERIFIED | The pacing rules (ready check, one query at a time, 0.5 s between pages, back-off) are wowzers'; unproven on a ~72,000-auction market. |
+
+## Battle pets and the catalogue (`Catalogue.lua`; strip-v1 kind 4; new 2026-09-29)
+
+| API or behaviour | Exists | Works as we use it | Evidence / notes |
+| --- | --- | --- | --- |
+| `C_AuctionHouse.GetItemKeyInfo(itemKey)` → `{itemID, battlePetSpeciesID, itemName, quality, iconFileID, isPet, isCommodity, isEquipment, …}`, `nil` until the item is cached | yes (source) | UNVERIFIED | `AuctionHouseDocumentation.lua` on the `forever` branch (api-v1 "The catalogue"). `itemName` is assumed to carry the variant's suffix ("Severing Axe of Magic"). Called after the browse finished, 200 per frame, once per key per session. |
+| Event `ITEM_KEY_ITEM_INFO_RECEIVED` after an uncached `GetItemKeyInfo` | yes (source) | UNVERIFIED | Same file. The addon waits for it at most 5 s, then sends what it has. Whether these lookups count against the auction house's message throttle is unknown: they aren't `C_AuctionHouse` queries of the throttled kind as far as the source says. |
+| Caged battle pets sell on Forever's auction house; a pet's browse result has `battlePetSpeciesID` > 0 and the cage's `itemID` | UNVERIFIED | UNVERIFIED | api-v1 "Battle pets" reserves `v = 65536 + species`. The client has 114 `BattlePetSpecies` rows (wowzers' ledger). |
+| `GetReplicateItemLink(i)` of a caged pet is a `battlepet::…` link | UNVERIFIED | UNVERIFIED | Retail convention. A pet whose link names no species is left out of the book. |
+| `C_Item.GetItemInfo(id)`'s 4th return is the item's base level (compared with `itemKey.itemLevel`) | yes (source) | UNVERIFIED | `ItemDocumentation.lua`. `nil` for an uncached item: that result isn't counted. |
+
+## Item tooltips (`Tooltip.lua`) (wowzers rows)
+
+| API or behaviour | Exists | Works as we use it | Evidence / notes |
+| --- | --- | --- | --- |
+| `TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, fn)` | yes | UNVERIFIED | source (`TooltipDataHandler.lua`): insecure callers run with `securecallfunction` + `forceinsecure`, so the callback can't taint Blizzard's tooltips. |
+| `tooltipData.guid`, `.hyperlink`, `.id`; `C_Item.GetItemLinkByGUID(guid)` | yes | UNVERIFIED | source (`TooltipUtil.lua` `GetDisplayedItem`). |
+| `tooltip:GetProcessingTooltipInfo()` for a bag slot's stack | yes | UNVERIFIED | source. |
+| ` TextLeftN` line globals (graphs anchor to the blank line) | yes | UNVERIFIED | source (`SharedTooltipTemplates.xml`). A tooltip without a name gets the text only. |
+| `GameTooltip:SetMinimumWidth(width)` | yes | UNVERIFIED | source; the addon sets 0 back when it releases its graphs. |
+| `HookScript("OnHide")` / `("OnTooltipCleared")` on Blizzard's tooltips | yes | UNVERIFIED | source; the hook itself is unproven. |
+| "·" (U+00B7) and "–" (U+2013) in the tooltip font | expected | UNVERIFIED | wowzers' search window uses "·". |
+
+## Things that do NOT exist or do NOT work (wowzers)
+
+| Thing | Status | Evidence / consequence |
+| --- | --- | --- |
+| `ReloadUI()` / `C_UI.Reload` from code, or from an addon's own button | protected / did nothing | measured (2026-09-25, wowzers). The addon never offers a reload button; the player types `/reload`. |
+| SavedVariables on a cold start | broken on beta | see "Prices files". |
+| `GetItemInfo`, bare `GetPlayerMapPosition` globals | nil | source. The addon uses `C_Item`. |
+| `COMBAT_LOG_EVENT_UNFILTERED` | refused | measured. Not used. |
+
+## Secret values (wowzers)
+
+`issecretvalue(v)` is the only valid test; `type(secret)` returns the real type; `==`, `<`, arithmetic, `#`, table keys and truth tests on a secret throw; `tostring` and `..` produce a secret string. The auction house read calls have no `SecretReturns` (source), but every value the addon reads goes through `ns.plain` (a secret reads nil and is skipped), and nothing secret reaches the strip.
+
+## Installation facts (outside the client) (wowzers)
+
+| Fact | Status | Evidence |
+| --- | --- | --- |
+| No `Blizzard Entertainment\World of Warcraft` registry keys on the dev machine | local, 2026-09-24 | the registry read is best effort |
+| Battle.net's `C:\ProgramData\Battle.net\Agent\product.db` lists installs (`wow_classic_beta` at `G:/Battle.net/World of Warcraft`, subfolder `_classic_beta_`) | local, 2026-09-24 | parsed by `wow::detect::parse_product_db`; fixture `companion/tests/fixtures/product.db` |
+| The beta flavor folder is `_classic_beta_` with `WowB.exe` | local, 2026-09-24 | detection ranks it first |
+| ` \Interface\AddOns` doesn't exist until the first addon is installed | local, 2026-09-24 | the installer creates it |
+| The CurseForge client manages an addon folder it installed and flags or overwrites changes | community | Jared, 2026-09-29. So the app never writes inside `AuctionHouseFYI\` unless it installed that folder itself (stamp `.ahf-app-version`). |
+
+## Behavior gotchas (wowzers)
+
+- Registering an event the client doesn't know throws and aborts the rest of the file: every registration goes through `pcall`.
+- `OnUpdate` `elapsed` is quantized to 1 ms.
+- `string.format("%d", n)` throws for `n` past 2³¹ − 1: format item keys with `%.0f`.
+- A `.toc` edit or a new addon folder needs a full client restart, not `/reload`.
+
+## Pending in-game checks
+
+Paste the outputs back into this file with the build number. Install the addon by junction (`AGENTS.md`), fully restart the client, log in.
+
+```
+-- Identity and the strip
+/dump select(4, GetBuildInfo())                          -- 16001
+/ahf                                                      -- status: build 1, the market, the tables, scans
+/ahf pixel                                                -- scale*physH/768 = 1.0000, left/top whole numbers, 0 px from the top
+/dump C_AddOns.IsAddOnLoaded("AuctionHouseFYI_App"), C_AddOns.IsAddOnLoaded("Wowzers")
+/dump GetPhysicalScreenSize(), UIParent:GetEffectiveScale()
+
+-- The prices tables (with the desktop app running and paired or not; after it wrote the file, /reload)
+/ahf status                                               -- "prices: Normal <faction> (ruleset normal, …), from the desktop app's table" and "data: auctionhouse.fyi"
+/dump collectgarbage("count")                             -- memory with both tables loaded (paste it)
+
+-- Auction scans (desktop app running; open an auctioneer; the data must be 5+ minutes old)
+/dump C_AuctionHouse.IsThrottledMessageSystemReady()     -- true before; false = throttled (relog clears it)
+/ahf status                                               -- "scanned N items just now, sending … / sent twice"; the app's window shows the scan
+/dump #C_AuctionHouse.GetBrowseResults(), C_AuctionHouse.HasFullBrowseResults()
+/dump C_AuctionHouse.GetNumReplicateItems()              -- above 0 after an order book
+/dump C_AuctionHouse.GetReplicateItemInfo(0)             -- … count (3rd) … buyoutPrice (10th) … itemID (17th)
+
+-- The catalogue and item levels (after the first browse this session)
+/dump C_AuctionHouse.GetItemKeyInfo(C_AuctionHouse.GetBrowseResults()[1].itemKey)   -- itemName, quality, iconFileID, isCommodity, isEquipment, isPet
+/ahf status                                               -- "catalogue: N names sent …" and "item levels: X of Y results differ …"
+
+-- Battle pets (search "Pet Cage" or a pet by name at the auction house)
+/dump C_AuctionHouse.GetBrowseResults()[1].itemKey       -- battlePetSpeciesID > 0 and the cage's itemID if pets sell at all
+/run for i=0,C_AuctionHouse.GetNumReplicateItems()-1 do local l=C_AuctionHouse.GetReplicateItemLink(i) if l and l:find("battlepet:") then print(i,(l:gsub("\124","\124\124"))) break end end
+
+-- Suffixed links in the order book
+/ahf status                                               -- the "links:" line: N of M auctions carried a suffix (bonus lists)
+
+-- Tooltips: hover Linen Cloth in your bags
+-- "Auction house" (gold) with an age, "Lowest … · N listed" with "1 d …%", "7 d low … · high …" with "7 d …%", a sparkline, a range bar.
+/dump TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall
+
+-- Beside wowzers (both addons enabled, full restart)
+/ahf status                                               -- "scan: standing down (the Wowzers addon scans)"
+/ahf pixel                                                -- "24 px from the top" (K = 4)
+
+```
+
+- Window title: with the client running, in PowerShell `Get-Process | Where-Object MainWindowTitle | Select-Object ProcessName, MainWindowTitle` should show exactly `World of Warcraft`.
+
+## Books-only acquisition policy (2026-09-29)
+
+The current addon requests only replicate books; missing APIs/events, a recent attempt or a ten-second no-answer timeout never starts a browse fallback. The desktop decodes legacy kind-2 frames for diagnostics but never queues them for upload. Catalogue collection now observes the player's browse events passively; it does not start or page a browse. No new game API is introduced by this change, and no additional in-game behavior is claimed as verified.
+
+Offline validation covers decision guards, replicate timeout with no fallback, player-search deferral, a real Lua book export through the Rust decoder, and ignoring legacy summaries in the desktop upload flow. In game, `/reload`, open an auctioneer with the paired desktop app running, inspect `/ahf status` and BugSack, then `/ahf scan`. A successful read should produce a book; missing/throttled/no-answer replication should show waiting without a browse or summary upload. Verify a second manual attempt within twenty minutes does not call replication again. These steps remain pending on Forever.
+
+## Opening latency (2026-10-05)
+
+The addon now checks on the first timer frame after `AUCTION_HOUSE_SHOW`, without the inherited two-second delay. A temporarily busy message system gets opening checks every 0.1 s for at most 60 s, including with `live` disabled, instead of waiting for the next 30 s live check. The current opening, search hooks, settings, freshness, combat and replicate interval still guard each request. The first read batch starts inside `REPLICATE_ITEM_LIST_UPDATE`; remaining reads and packing still yield in bounded batches so a large market does not run in one frame. For a desktop whose helper announces kinds 6/7, packing queues fragments as it proceeds and updates the checksum incrementally; it does not construct one packed string before sending. Legacy desktops retain the full kind-5 transfer. Pixels still wait for the server response and the merged read.
+
+No new WoW API is introduced. Fake-client Lua tests cover prompt requests, initial readiness, the game's favourites, player searches, close/reopen cancellation, bounded waiting and a multi-batch book passing through the Rust pixel decoder. These do not measure live server latency or client frame cost; the new scheduling remains UNVERIFIED on Forever.
+
+Pending in-game check: update the existing addon files and `/reload` (the TOC and file list did not change). With the desktop app running and scanning enabled, open an auctioneer without clicking Search; run `/ahf status` while waiting and `/ahf pixel` once the transfer starts. Repeat with favourites present, and close/reopen while the message system is busy. A player search during that busy wait must defer acquisition. A game-ready request should start promptly; pixels still wait for the server response and book preparation. Repeated replication is throttled: allow twenty minutes between attempts, and check BugSack. Record client build, phase durations and any UI hitch before marking this scheduling verified.
+
+## Scan progress and work budgets (2026-10-05)
+
+- `debugprofilestop()` is source-confirmed to return milliseconds since the shared profiling clock was reset: Forever FrameScriptDocumentation. Live resolution, cost and usefulness for acquisition budgets remain UNVERIFIED. It is optional, secret-checked, and never reset (`debugprofilestart` is not called). Missing, backwards, invalid or stalled clocks retain bounded work; caps prevent an unlimited callback. The existing 1,000-auction read floor is retained so optional profiling cannot reduce prior read throughput; it can grow a cheap batch up to the cap. A minimum read batch or one item's sorting/encoding can exceed the 2 ms target.
+- The addon-owned panel uses existing frame/texture placement methods and `CreateFontString`, `SetText`, `SetTextColor`: Forever SimpleFrame documentation, SimpleFontString documentation. `GameFontHighlightSmall` is also referenced by Forever's shared font styles, and already used by our tooltip. Its placement and readability with the real AH, varied UI scale and other addons remain UNVERIFIED.
+- The panel is draggable with `SetMovable`, `EnableMouse`, `RegisterForDrag`, `StartMoving`, `StopMovingOrSizing`, `SetClampedToScreen` and `GetPoint`, all in the Forever SimpleFrame, SimpleScriptRegion and SimpleScriptRegionResizing docs; Forever's own `ClickToDragMixin` (`SharedUIPanelTemplates.lua`) drags with `OnDragStart` → `StartMoving`. The spot goes into `AuctionHouseFYIDB.scanPanel`, so it lasts over a `/reload` and not over a cold start (SavedVariables, above). Dragging in game is UNVERIFIED. Check: drag the panel, `/dump AuctionHouseFYIDB.scanPanel`, `/reload`, reopen the AH and see it in the same spot; `/ahf panel reset` puts it back at the top.
+- Offline Lua 5.1 tests exercise missing/stalled/working profiling clocks, stage text, unknown response ETA, close-during-transfer behavior, capability selection, pixels emitted while packing, and 10 Hz scheduling at different frame rates. Rust tests cover full-book verification, fragment replay, loss, reordering, malformed data and cancellation. These are simulated clients, not live performance measurements.
+
+Pending: update both desktop and existing addon, let the app write the helper file, then `/reload`. Open an auctioneer and observe the progress panel and pixels. Run `/ahf status` for response/read/preparation/transmission durations and `transfer: incremental`; `/ahf pixel` for scale/position; `/dump debugprofilestop and debugprofilestop()` for the clock. Close while sending and confirm the panel stays until sending finishes. The desktop should accept one book, including after a brief obstruction during the first pass. Repeat at minimum/maximum UI scale and inspect BugSack. Do not call replication again within twenty minutes. No TOC or file-list change: `/reload` is sufficient for an existing installation; a newly created helper addon still requires a full client restart.
+
+## Website atlas client metadata (2026-10-08)
+
+The geographic atlas extracts UiMap, UiMapAssignment, UiMapXMapArt, UiMapArt,
+UiMapArtStyleLayer, WorldMapOverlay and AreaTable from 1.60.1.70245
+(`wow_classic_beta`), through pinned wago.tools CSV exports. Source SHA-256s and
+exact URLs are recorded in `cloud/data/atlas-v1.json`; extraction and provenance
+research are in `docs/atlas/research.md`. This confirms client table facts only:
+all records are `unverified-forever`, and live map alignment is UNVERIFIED.
+Map extents are not zone borders; overlay hit-box centers are approximate area
+label anchors, not NPC/quest locations. No in-game API, process access, input,
+character data, market-source change or addon modification is introduced.
+
+Manual check on build 1.60.1.70245: open the game's world map, compare Azeroth,
+Kalimdor, Eastern Kingdoms, Elwynn Forest, Riverglades, Zephras Isle and Mount
+Hyjal with the website atlas; compare displayed area names in Elwynn/Hyjal.
+Record build, map, visible differences and screenshot evidence before promoting
+an individual fact to `verified-forever`. Website-only change: no `/reload` or
+client restart required. Do not infer quest givers or item drops from label pins.
+
+## Knowledge research (2026-10-08; no addon collector added)
+
+The MCP app's static knowledge uses downloaded client tables and an explicitly labeled community-reference subset. It does not call new in-game quest APIs. Full source/rights matrix and reproducible imports: knowledge sources.
+
+| Mechanism | Exists / source evidence | Works as a future collector would need | Evidence / limits |
+| --- | --- | --- | --- |
+| Current Forever DB2 `QuestV2` export | yes; 6,609 rows on 1.60.1.70245 | No complete quest-details coverage | Direct HTTP/local parse 2026-10-08. Columns only ID, UniqueBitFlag, UiQuestDetailsThemeID; no title/objective/reward facts. Membership is not game availability. |
+| `QuestLine`, `QuestLineXQuest` exports | yes; 3 named lines, 22 members on 1.60.1.70245 | Prerequisite meaning UNVERIFIED | Direct HTTP/local parse. OrderIndex means ordered client membership; not a verified prerequisite graph. |
+| `C_QuestLog.GetTitleForQuestID(questID)` | yes (source); nullable cstring title | UNVERIFIED | Forever generated QuestLogDocumentation; no in-game call made. Missing/cache/unknown behavior unobserved. |
+| `C_QuestLog.RequestLoadQuestByID(questID)` | yes (source) | UNVERIFIED | Forever generated QuestLogDocumentation; rate, event timing and useful data for arbitrary IDs unobserved. No bulk request implemented. |
+| `C_QuestLog.GetQuestObjectives(questID)` | yes (source); MayReturnNothing | UNVERIFIED | Forever generated QuestLogDocumentation. Does not establish complete public objective data for quests outside the player's log. Never upload personal completion progress. |
+| `C_QuestLog.GetQuestDifficultyLevel(questID)` | yes (source); numeric level | UNVERIFIED | Forever generated QuestLogDocumentation. Scaling, eligibility and behavior for unknown IDs unobserved. |
+
+API source: Forever QuestLogDocumentation. Client tables and MIT community references are labeled unverified/historical in tool responses. They are not new in-game observations.
+
+Optional manual read probes, on the current client, without adding files or a collector:
+
+```lua
+/dump GetBuildInfo()
+/dump (function() local v=C_QuestLog.GetTitleForQuestID(91743); if issecretvalue(v) then return "secret" end return v end)()
+/dump (function() local v=C_QuestLog.GetQuestDifficultyLevel(91743); if issecretvalue(v) then return "secret" end return v end)()
+
+```
+
+Record the build, date, return values and whether the quest was already known to the client. A nil title is a valid source-declared outcome and does not prove the quest was removed. Do not batch RequestLoadQuestByID until one request's behavior and load event have been observed. No `/reload` or full restart is needed for this change; no addon/TOC/file list changed.

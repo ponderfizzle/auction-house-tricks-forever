@@ -1,4 +1,4 @@
--- Auction House Dressing Room Helper
+-- Auction House Tricks Forever
 --
 -- While the auction house is open and Filter > Hide tooltips is checked,
 -- hide the item tooltip under the cursor and the equipped-gear comparison
@@ -8,7 +8,7 @@
 -- That entry is not saved. It starts unchecked and is forced off every time
 -- the auction house closes. It stays checked across Buy, Sell, and Auctions.
 --
--- Two saved options live in AHDressingRoomHelperDB. Both default off.
+-- Two saved options live in AuctionHouseTricksForeverDB. Both default off.
 -- "Close Dressing Room with Auction House" also hides DressUpFrame when
 -- the auction house closes. "Dim unsellable items when Sell tab selected"
 -- fades bag items that cannot be posted, and only while that tab is open.
@@ -22,16 +22,16 @@
 local addonName, ns = ...
 
 ns.name = addonName
-local ADDON_VERSION = "1.7.1"
+local ADDON_VERSION = "2.0.0"
 
 -- ---------------------------------------------------------------------------
 -- State. Hide tooltips is not saved. The Dressing Room and dim options are.
--- AHDressingRoomHelperDB is created in ADDON_LOADED, not here.
+-- AuctionHouseTricksForeverDB is created in ADDON_LOADED, not here.
 -- ---------------------------------------------------------------------------
 
 local DB_CLOSE_KEY = "closeDressingRoom"
 local DB_DIM_KEY = "dimUnsellable"
-local SETTINGS_CATEGORY_NAME = "AH Dressing Room Helper"
+local SETTINGS_CATEGORY_NAME = "Auction House Tricks Forever"
 
 local hideTooltips = false
 local settingsCategory
@@ -544,7 +544,7 @@ local function DescriptionText(element)
 end
 
 local function IsRadioElement(element)
-    if type(element) ~= "table" or element.ahdrhHideTooltips then
+    if type(element) ~= "table" or element.ahtfHideTooltips then
         return false
     end
     if element.isRadio or element.radio then
@@ -583,7 +583,7 @@ end
 local function ListHasEntry(list)
     for i = 1, #list do
         local element = list[i]
-        if type(element) == "table" and (element.ahdrhHideTooltips or DescriptionText(element) == HIDE_TOOLTIPS_LABEL) then
+        if type(element) == "table" and (element.ahtfHideTooltips or DescriptionText(element) == HIDE_TOOLTIPS_LABEL) then
             return true
         end
     end
@@ -711,7 +711,7 @@ local function InsertHideTooltipsEntry(root)
     end
     element = created
     if type(element) == "table" then
-        element.ahdrhHideTooltips = true
+        element.ahtfHideTooltips = true
         SetEntryTooltip(element)
     end
 
@@ -817,13 +817,13 @@ local function HookNamedMethod(object, name, after)
     if not object or type(object[name]) ~= "function" or type(hooksecurefunc) ~= "function" then
         return false
     end
-    object.ahdrhHooked = object.ahdrhHooked or {}
-    if object.ahdrhHooked[name] then
+    object.ahtfHooked = object.ahtfHooked or {}
+    if object.ahtfHooked[name] then
         return true
     end
     local ok = pcall(hooksecurefunc, object, name, after)
     if ok then
-        object.ahdrhHooked[name] = true
+        object.ahtfHooked[name] = true
     end
     return ok
 end
@@ -877,51 +877,51 @@ local function InstallClearButtonHooks(ahFrame)
     end
 
     local clear, clearKey = FindClearButton(button)
-    if clear and not clear.ahdrhClearHook and clear.HookScript then
+    if clear and not clear.ahtfClearHook and clear.HookScript then
         local ok = pcall(clear.HookScript, clear, "OnClick", function()
             ClearHideTooltipsFromReset()
         end)
         if ok then
-            clear.ahdrhClearHook = true
+            clear.ahtfClearHook = true
             NoteHook("clearClick", "ClearButton:" .. (clearKey or "OnClick"))
         end
     end
 
-    if type(button.SetDefaultCallback) == "function" and not button.ahdrhDefaultHooked and type(hooksecurefunc) == "function" then
-        button.ahdrhDefaultHooked = true
+    if type(button.SetDefaultCallback) == "function" and not button.ahtfDefaultHooked and type(hooksecurefunc) == "function" then
+        button.ahtfDefaultHooked = true
         hooksecurefunc(button, "SetDefaultCallback", function(self, callback)
-            if self.ahdrhWrappingDefault or type(callback) ~= "function" or callback == self.ahdrhDefaultWrapped then
+            if self.ahtfWrappingDefault or type(callback) ~= "function" or callback == self.ahtfDefaultWrapped then
                 return
             end
-            self.ahdrhWrappingDefault = true
+            self.ahtfWrappingDefault = true
             local wrapped = function(...)
                 ClearHideTooltipsFromReset()
                 pcall(callback, ...)
             end
-            self.ahdrhDefaultWrapped = wrapped
+            self.ahtfDefaultWrapped = wrapped
             self.defaultCallback = wrapped
-            self.ahdrhWrappingDefault = false
+            self.ahtfWrappingDefault = false
         end)
         NoteHook("clearClick", "SetDefaultCallback")
     end
-    if type(button.defaultCallback) == "function" and button.defaultCallback ~= button.ahdrhDefaultWrapped then
+    if type(button.defaultCallback) == "function" and button.defaultCallback ~= button.ahtfDefaultWrapped then
         local callback = button.defaultCallback
         local wrapped = function(...)
             ClearHideTooltipsFromReset()
             pcall(callback, ...)
         end
-        button.ahdrhDefaultWrapped = wrapped
+        button.ahtfDefaultWrapped = wrapped
         button.defaultCallback = wrapped
         NoteHook("clearClick", "defaultCallback")
     end
 
-    if type(button.SetIsDefaultCallback) == "function" and not button.ahdrhIsDefaultHooked and type(hooksecurefunc) == "function" then
-        button.ahdrhIsDefaultHooked = true
+    if type(button.SetIsDefaultCallback) == "function" and not button.ahtfIsDefaultHooked and type(hooksecurefunc) == "function" then
+        button.ahtfIsDefaultHooked = true
         hooksecurefunc(button, "SetIsDefaultCallback", function(self, callback)
-            if self.ahdrhWrappingIsDefault or callback == self.ahdrhIsDefaultWrapped then
+            if self.ahtfWrappingIsDefault or callback == self.ahtfIsDefaultWrapped then
                 return
             end
-            self.ahdrhWrappingIsDefault = true
+            self.ahtfWrappingIsDefault = true
             local wrapped = function(...)
                 local isDefault = true
                 if type(callback) == "function" then
@@ -935,13 +935,13 @@ local function InstallClearButtonHooks(ahFrame)
                 end
                 return isDefault
             end
-            self.ahdrhIsDefaultWrapped = wrapped
+            self.ahtfIsDefaultWrapped = wrapped
             self.isDefaultCallback = wrapped
-            self.ahdrhWrappingIsDefault = false
+            self.ahtfWrappingIsDefault = false
         end)
         NoteHook("clearUpdate", "SetIsDefaultCallback")
     end
-    if button.isDefaultCallback ~= button.ahdrhIsDefaultWrapped then
+    if button.isDefaultCallback ~= button.ahtfIsDefaultWrapped then
         local callback = button.isDefaultCallback
         local wrapped = function(...)
             local isDefault = true
@@ -956,7 +956,7 @@ local function InstallClearButtonHooks(ahFrame)
             end
             return isDefault
         end
-        button.ahdrhIsDefaultWrapped = wrapped
+        button.ahtfIsDefaultWrapped = wrapped
         button.isDefaultCallback = wrapped
         NoteHook("clearUpdate", "isDefaultCallback")
     end
@@ -973,7 +973,7 @@ local function AddOurCheckbox(original, owner)
         end
     end)
     if type(element) == "table" then
-        element.ahdrhHideTooltips = true
+        element.ahtfHideTooltips = true
         SetEntryTooltip(element)
     end
     filterMenuDebug.insertions = (filterMenuDebug.insertions or 0) + 1
@@ -989,14 +989,14 @@ local function WrapGenerator(generator, via)
         local restore = {}
         local buildCount = 0
         local function wrapDescription(desc)
-            if type(desc) ~= "table" or desc.ahdrhCreateWrapped or type(desc.CreateCheckbox) ~= "function" then
+            if type(desc) ~= "table" or desc.ahtfCreateWrapped or type(desc.CreateCheckbox) ~= "function" then
                 return
             end
-            desc.ahdrhCreateWrapped = true
+            desc.ahtfCreateWrapped = true
             local original = desc.CreateCheckbox
             restore[#restore + 1] = function()
                 desc.CreateCheckbox = original
-                desc.ahdrhCreateWrapped = nil
+                desc.ahtfCreateWrapped = nil
             end
             local prevUncollected = false
             desc.CreateCheckbox = function(self, text, isSelected, setSelected, data)
@@ -1048,18 +1048,18 @@ local function ApplyMenuWrap(button, generator, via)
     if menuWrapping or type(generator) ~= "function" then
         return
     end
-    if generator == button.ahdrhWrappedGenerator then
+    if generator == button.ahtfWrappedGenerator then
         return
     end
-    if button.ahdrhWrappedGenerator and button.menuGenerator == button.ahdrhWrappedGenerator and generator == button.ahdrhOriginalGenerator then
+    if button.ahtfWrappedGenerator and button.menuGenerator == button.ahtfWrappedGenerator and generator == button.ahtfOriginalGenerator then
         return
     end
     menuWrapping = true
-    button.ahdrhOriginalGenerator = generator
+    button.ahtfOriginalGenerator = generator
     local wrapped = WrapGenerator(generator, via)
-    button.ahdrhWrappedGenerator = wrapped
+    button.ahtfWrappedGenerator = wrapped
     local stored = StoreWrappedGenerator(button, wrapped)
-    button.ahdrhMenuWrapped = true
+    button.ahtfMenuWrapped = true
     filterMenuDebug.method = via .. "->" .. stored
     menuWrapping = false
 end
@@ -1073,7 +1073,7 @@ local function EnsureAddButtonHook()
         if legacyDepth <= 0 or legacyInserting then
             return
         end
-        if type(info) ~= "table" or info.ahdrhHideTooltips or not IsUsableLabel(info.text) then
+        if type(info) ~= "table" or info.ahtfHideTooltips or not IsUsableLabel(info.text) then
             return
         end
         if type(UIDropDownMenu_CreateInfo) ~= "function" then
@@ -1082,7 +1082,7 @@ local function EnsureAddButtonHook()
         legacyInserting = true
         local our = UIDropDownMenu_CreateInfo()
         our.text = HIDE_TOOLTIPS_LABEL
-        our.ahdrhHideTooltips = true
+        our.ahtfHideTooltips = true
         our.isNotRadio = true
         our.keepShownOnClick = true
         our.checked = hideTooltips
@@ -1121,13 +1121,13 @@ local function InstallFilterMenu(ahFrame)
         if type(button.menuGenerator) == "function" then
             ApplyMenuWrap(button, button.menuGenerator, "CreateCheckbox-wrap")
         end
-        if type(hooksecurefunc) == "function" and filterMenuDebug.hasSetupMenu and not button.ahdrhSetupHooked then
-            button.ahdrhSetupHooked = true
+        if type(hooksecurefunc) == "function" and filterMenuDebug.hasSetupMenu and not button.ahtfSetupHooked then
+            button.ahtfSetupHooked = true
             hooksecurefunc(button, "SetupMenu", function(self, generator)
                 ApplyMenuWrap(self, generator, "CreateCheckbox-wrap")
             end)
         end
-    elseif type(button.initialize) == "function" and not button.ahdrhLegacy then
+    elseif type(button.initialize) == "function" and not button.ahtfLegacy then
         EnsureAddButtonHook()
         local original = button.initialize
         button.initialize = function(self, level, menuList)
@@ -1142,7 +1142,7 @@ local function InstallFilterMenu(ahFrame)
                 legacyInserting = true
                 local our = UIDropDownMenu_CreateInfo()
                 our.text = HIDE_TOOLTIPS_LABEL
-                our.ahdrhHideTooltips = true
+                our.ahtfHideTooltips = true
                 our.isNotRadio = true
                 our.keepShownOnClick = true
                 our.checked = hideTooltips
@@ -1164,13 +1164,13 @@ local function InstallFilterMenu(ahFrame)
                 legacyInserting = false
             end
         end
-        button.ahdrhLegacy = true
+        button.ahtfLegacy = true
         if filterMenuDebug.method == "not-installed" then
             filterMenuDebug.method = "UIDropDownMenu-wrapped"
         end
     end
 
-    return button.ahdrhMenuWrapped or button.ahdrhLegacy or filterMenuDebug.clearClick ~= "none"
+    return button.ahtfMenuWrapped or button.ahtfLegacy or filterMenuDebug.clearClick ~= "none"
 end
 
 local function AttachAuctionHouse(ahFrame)
@@ -1234,19 +1234,19 @@ end
 local function InitDB()
     -- SavedVariables are applied just before this addon's ADDON_LOADED.
     -- Creating the table here, not at file scope, is what the Forever guide asks.
-    if type(AHDressingRoomHelperDB) ~= "table" then
-        AHDressingRoomHelperDB = {}
+    if type(AuctionHouseTricksForeverDB) ~= "table" then
+        AuctionHouseTricksForeverDB = {}
     end
-    if AHDressingRoomHelperDB[DB_CLOSE_KEY] == nil then
-        AHDressingRoomHelperDB[DB_CLOSE_KEY] = false
+    if AuctionHouseTricksForeverDB[DB_CLOSE_KEY] == nil then
+        AuctionHouseTricksForeverDB[DB_CLOSE_KEY] = false
     end
-    if AHDressingRoomHelperDB[DB_DIM_KEY] == nil then
-        AHDressingRoomHelperDB[DB_DIM_KEY] = false
+    if AuctionHouseTricksForeverDB[DB_DIM_KEY] == nil then
+        AuctionHouseTricksForeverDB[DB_DIM_KEY] = false
     end
 end
 
 local function CloseDressingRoomEnabled()
-    return type(AHDressingRoomHelperDB) == "table" and AHDressingRoomHelperDB[DB_CLOSE_KEY] == true
+    return type(AuctionHouseTricksForeverDB) == "table" and AuctionHouseTricksForeverDB[DB_CLOSE_KEY] == true
 end
 
 local function HideDressingRoomFrame()
@@ -1361,7 +1361,7 @@ local function AddonLoaded(name)
 end
 
 local function DimSavedOn()
-    return type(AHDressingRoomHelperDB) == "table" and AHDressingRoomHelperDB[DB_DIM_KEY] == true
+    return type(AuctionHouseTricksForeverDB) == "table" and AuctionHouseTricksForeverDB[DB_DIM_KEY] == true
 end
 
 -- Equipped bags only: backpack 0, bags 1-4, reagent bag 5. Bank, keyring,
@@ -1648,14 +1648,14 @@ end
 -- is correct for a container slot and wrong for a Bagnon slot, so the
 -- button's own bag field wins when it is present.
 -- AdiBags and BetterBags use .bag/.slot or .bagID/.slotID. ArkInventory
--- uses ARK_Data.blizzard_id and .slot_id. Adapters may set AHDRHBag.
+-- uses ARK_Data.blizzard_id and .slot_id. Adapters may set AHTFBag.
 local function ResolveBagSlot(button)
     if type(button) ~= "table" then
         return nil
     end
-    if type(button.AHDRHBag) == "number" and type(button.AHDRHSlot) == "number" then
-        if IsPlayerCarryBag(button.AHDRHBag) and SlotOk(button.AHDRHSlot) then
-            return button.AHDRHBag, button.AHDRHSlot
+    if type(button.AHTFBag) == "number" and type(button.AHTFSlot) == "number" then
+        if IsPlayerCarryBag(button.AHTFBag) and SlotOk(button.AHTFSlot) then
+            return button.AHTFBag, button.AHTFSlot
         end
     end
     if type(button.GetBag) == "function" and type(button.GetID) == "function" then
@@ -1818,7 +1818,7 @@ local function DimSessionFailed()
     dimTickerOn = false
     dimActive = false
     pcall(ClearAllDims)
-    print("AH Dressing Room Helper: item dimming turned off for this session (/reload to try again).")
+    print("Auction House Tricks Forever: item dimming turned off for this session (/reload to try again).")
 end
 
 local function NoteDimFailure()
@@ -2082,7 +2082,7 @@ local function ScanBaganator()
     end
     Baganator.API.RegisterCornerWidget(
         "Unsellable on the auction house",
-        "AHDressingRoomHelperUnsellable",
+        "AuctionHouseTricksForeverUnsellable",
         function(cornerFrame, details)
             local button = cornerFrame and cornerFrame.GetParent and cornerFrame:GetParent()
             local loc = details and details.itemLocation
@@ -2090,10 +2090,10 @@ local function ScanBaganator()
                 return false
             end
             if type(loc.bagID) == "number" then
-                button.AHDRHBag = loc.bagID
+                button.AHTFBag = loc.bagID
             end
             if type(loc.slotIndex) == "number" then
-                button.AHDRHSlot = loc.slotIndex
+                button.AHTFSlot = loc.slotIndex
             end
             if ShouldDimBags() then
                 ApplyOne(button)
@@ -2144,9 +2144,9 @@ local function NoteBetterBagsSlot(button)
         return
     end
     if IsPlayerCarryBag(second) and SlotOk(first) then
-        button.AHDRHBag, button.AHDRHSlot = second, first
+        button.AHTFBag, button.AHTFSlot = second, first
     elseif IsPlayerCarryBag(first) and SlotOk(second) then
-        button.AHDRHBag, button.AHDRHSlot = first, second
+        button.AHTFBag, button.AHTFSlot = first, second
     end
 end
 
@@ -2176,10 +2176,10 @@ local function ScanBetterBags()
                     local button = item.button or item
                     if type(button) == "table" and type(data) == "table" then
                         if type(data.bagid) == "number" then
-                            button.AHDRHBag = data.bagid
+                            button.AHTFBag = data.bagid
                         end
                         if type(data.slotid) == "number" then
-                            button.AHDRHSlot = data.slotid
+                            button.AHTFSlot = data.slotid
                         end
                         ApplyOne(button)
                     end
@@ -2415,7 +2415,7 @@ RequestDimRefresh = function()
     end
 end
 
-local SETTINGS_RESET_POPUP = "AHDRESSINGROOMHELPER_RESET_SETTINGS"
+local SETTINGS_RESET_POPUP = "AUCTIONHOUSETRICKSFOREVER_RESET_SETTINGS"
 local SETTINGS_CLOSE_LABEL = "Close Dressing Room with Auction House"
 local SETTINGS_DIM_LABEL = "Dim unsellable items when Sell tab selected"
 local SETTINGS_CLOSE_TIP = "When this is enabled, the Dressing Room closes when the Auction House closes, including when you click the X or walk away."
@@ -2424,8 +2424,8 @@ local SETTINGS_DIM_WARNING = " This setting may not be compatible with your bag 
 
 local function ResetHelperSettingsToDefaults()
     InitDB()
-    AHDressingRoomHelperDB[DB_CLOSE_KEY] = false
-    AHDressingRoomHelperDB[DB_DIM_KEY] = false
+    AuctionHouseTricksForeverDB[DB_CLOSE_KEY] = false
+    AuctionHouseTricksForeverDB[DB_DIM_KEY] = false
     if settingsPanel and settingsPanel.OnRefresh then
         settingsPanel:OnRefresh()
     end
@@ -2444,7 +2444,7 @@ local function EnsureSettingsResetPopup()
     local okay = OKAY or ACCEPT or YES
     local cancel = CANCEL or NO
     StaticPopupDialogs[SETTINGS_RESET_POPUP] = {
-        text = "Reset AH Dressing Room Helper settings to defaults?",
+        text = "Reset Auction House Tricks Forever settings to defaults?",
         button1 = okay,
         button2 = cancel,
         OnAccept = ResetHelperSettingsToDefaults,
@@ -2515,7 +2515,7 @@ end
 
 local function WriteSavedOption(key, checked)
     InitDB()
-    AHDressingRoomHelperDB[key] = checked and true or false
+    AuctionHouseTricksForeverDB[key] = checked and true or false
 end
 
 -- Both saved rows use this. onClick receives the new boolean and writes the
@@ -2562,7 +2562,7 @@ local function CreateSettingsCheckboxRow(parent, anchorTo, yOffset, labelText, t
     labelHit:SetPoint("TOPLEFT", check, "TOPRIGHT", 2, 6)
     labelHit:SetPoint("BOTTOMLEFT", check, "BOTTOMRIGHT", 2, -6)
     labelHit:SetWidth(32)
-    check.ahdrhLabelHit = labelHit
+    check.ahtfLabelHit = labelHit
 
     local function hideTip()
         if GameTooltip and GameTooltip.GetOwner and GameTooltip:GetOwner() == check then
@@ -2593,14 +2593,14 @@ local function CreateSettingsCheckboxRow(parent, anchorTo, yOffset, labelText, t
         end
         labelHit:SetWidth(textW + 8)
         check:SetHitRectInsets(0, -(textW + 16), -6, -6)
-        check.ahdrhTipBound = true
+        check.ahtfTipBound = true
     end
-    check.ahdrhRebindTip = bindTipScripts
+    check.ahtfRebindTip = bindTipScripts
     bindTipScripts()
 
     check:SetScript("OnClick", function(self)
-        if self.ahdrhLocked then
-            self:SetChecked(self.ahdrhSaved == true)
+        if self.ahtfLocked then
+            self:SetChecked(self.ahtfSaved == true)
             return
         end
         local checked = self:GetChecked() and true or false
@@ -2619,7 +2619,7 @@ local function BuildSettingsPanel()
     end
     EnsureSettingsResetPopup()
 
-    local panel = CreateFrame("Frame", "AHDressingRoomHelperSettingsPanel", UIParent)
+    local panel = CreateFrame("Frame", "AuctionHouseTricksForeverSettingsPanel", UIParent)
     panel:SetSize(600, 420)
 
     local title = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightHuge")
@@ -2682,29 +2682,29 @@ local function BuildSettingsPanel()
     function panel:OnRefresh()
         InitDB()
         if settingsCloseCheck then
-            local closeOn = AHDressingRoomHelperDB[DB_CLOSE_KEY] == true
-            settingsCloseCheck.ahdrhLocked = false
-            settingsCloseCheck.ahdrhSaved = closeOn
+            local closeOn = AuctionHouseTricksForeverDB[DB_CLOSE_KEY] == true
+            settingsCloseCheck.ahtfLocked = false
+            settingsCloseCheck.ahtfSaved = closeOn
             settingsCloseCheck:SetChecked(closeOn)
             settingsCloseCheck:Enable()
             if settingsCloseCheck.label then
                 settingsCloseCheck.label:SetFontObject("GameFontHighlight")
             end
-            if settingsCloseCheck.ahdrhRebindTip then
-                settingsCloseCheck.ahdrhRebindTip()
+            if settingsCloseCheck.ahtfRebindTip then
+                settingsCloseCheck.ahtfRebindTip()
             end
         end
         if settingsDimCheck then
-            local dimOn = AHDressingRoomHelperDB[DB_DIM_KEY] == true
-            settingsDimCheck.ahdrhSaved = dimOn
-            settingsDimCheck.ahdrhLocked = false
+            local dimOn = AuctionHouseTricksForeverDB[DB_DIM_KEY] == true
+            settingsDimCheck.ahtfSaved = dimOn
+            settingsDimCheck.ahtfLocked = false
             settingsDimCheck:SetChecked(dimOn)
             settingsDimCheck:Enable()
             if settingsDimCheck.label then
                 settingsDimCheck.label:SetFontObject("GameFontHighlight")
             end
-            if settingsDimCheck.ahdrhRebindTip then
-                settingsDimCheck.ahdrhRebindTip()
+            if settingsDimCheck.ahtfRebindTip then
+                settingsDimCheck.ahtfRebindTip()
             end
         end
     end
@@ -2751,7 +2751,7 @@ local function RegisterSettings()
 
     -- Canvas layout hides the settings list, including Blizzard's Defaults
     -- button that can reset all UI settings. We draw our own Defaults control
-    -- on the panel and only reset AHDressingRoomHelperDB through a StaticPopup.
+    -- on the panel and only reset AuctionHouseTricksForeverDB through a StaticPopup.
     local ok, category, layout = pcall(Settings.RegisterCanvasLayoutCategory, panel, SETTINGS_CATEGORY_NAME)
     if not ok or not category or not layout then
         settingsFailed = true
@@ -2809,7 +2809,7 @@ local function TipTargetLine(check, which)
         local name = FrameTag(frame)
         return label .. "=" .. name .. " " .. mouse .. " " .. script
     end
-    return which .. ": " .. flag(check, "check") .. "; " .. flag(check.ahdrhLabelHit, "labelHit")
+    return which .. ": " .. flag(check, "check") .. "; " .. flag(check.ahtfLabelHit, "labelHit")
 end
 
 local function PrintLayoutDebug()
@@ -2825,7 +2825,7 @@ local function PrintLayoutDebug()
             meta = value
         end
     end
-    print("AH Dressing Room Helper debug " .. ADDON_VERSION .. " (toc " .. tostring(meta) .. ")")
+    print("Auction House Tricks Forever debug " .. ADDON_VERSION .. " (toc " .. tostring(meta) .. ")")
     print(string.format(
         "filterMenu injected=%s method=%s tag=%s placed=%s insertions=%s tooltip=%s clearClick=%s clearUpdate=%s error=%s checked=%s",
         tostring(filterMenuDebug.injected),
@@ -2843,12 +2843,13 @@ local function PrintLayoutDebug()
     print(TipTargetLine(settingsDimCheck, "dim"))
 end
 
--- WoW matches slash commands without regard to case. Both spellings are
--- registered so /ahdrh and /AHDRH open the same category. "/ahdrh debug"
--- prints the Filter-menu injection and the settings-tooltip owners.
-SLASH_AHDRESSINGROOMHELPER1 = "/ahdrh"
-SLASH_AHDRESSINGROOMHELPER2 = "/AHDRH"
-SlashCmdList.AHDRESSINGROOMHELPER = function(msg)
+-- WoW matches slash commands without regard to case. /ahtf, /AHTF, and
+-- /ahtricks open the settings category. "/ahtf debug" prints the Filter-menu
+-- injection and the settings-tooltip owners.
+SLASH_AUCTIONHOUSETRICKSFOREVER1 = "/ahtf"
+SLASH_AUCTIONHOUSETRICKSFOREVER2 = "/AHTF"
+SLASH_AUCTIONHOUSETRICKSFOREVER3 = "/ahtricks"
+SlashCmdList.AUCTIONHOUSETRICKSFOREVER = function(msg)
     local text = ""
     if type(msg) == "string" then
         text = msg:lower():match("^%s*(.-)%s*$") or ""
@@ -2858,7 +2859,7 @@ SlashCmdList.AHDRESSINGROOMHELPER = function(msg)
         return
     end
     if not OpenSettings() then
-        print("AH Dressing Room Helper: open Game Menu, Options, AddOns, then AH Dressing Room Helper.")
+        print("Auction House Tricks Forever: open Game Menu, Options, AddOns, then Auction House Tricks Forever.")
     end
 end
 

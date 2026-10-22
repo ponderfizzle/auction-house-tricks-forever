@@ -1,0 +1,749 @@
+TOC format - Warcraft Wiki - Your wiki guide to the World of Warcraft
+
+# TOC format
+
+## Contents
+
+- 1 Rules
+- 2 Naming
+- 3 Variables
+- 4 Inline directives
+- 5 Addon directives
+
+- 5.1 Interface
+- 5.2 Displayed text and organization
+
+- 5.2.1 Title
+- 5.2.2 Notes
+- 5.2.3 Category
+- 5.2.4 Group
+- 5.3 Displayed icons
+
+- 5.3.1 IconTexture
+- 5.3.2 IconAtlas
+- 5.4 Addon compartment integration
+
+- 5.4.1 AddonCompartmentFunc
+- 5.4.2 AddonCompartmentFuncOnEnter
+- 5.4.3 AddonCompartmentFuncOnLeave
+- 5.5 Loading conditions
+
+- 5.5.1 LoadOnDemand
+- 5.5.2 Dependencies
+- 5.5.3 OptionalDeps
+- 5.5.4 LoadWith
+- 5.5.5 LoadManagers
+- 5.5.6 AllowLoadGameType
+- 5.5.7 ExcludeLoadGameType
+- 5.5.8 OnlyBetaAndPTR
+- 5.5.9 DefaultState
+- 5.6 Saved variables
+
+- 5.6.1 LoadSavedVariablesFirst
+- 5.6.2 SavedVariables
+- 5.6.3 SavedVariablesPerCharacter
+- 5.7 Metadata
+
+- 5.7.1 Author
+- 5.7.2 Version
+- 5.7.3 X-___
+- 5.8 Uncategorized
+
+- 5.8.1 AllowAddOnTableAccess
+- 5.9 Restricted
+
+- 5.9.1 AllowLoad
+- 5.9.2 EscalateErrorDuringLoad
+- 5.9.3 LoadFirst
+- 5.9.4 SavedVariablesMachine
+- 5.9.5 UseSecureEnvironment
+- 6 Inline directives
+- 7 Patch changes
+
+- 7.1 Modern
+- 7.2 Forever
+- 7.3 Classic Progression
+- 7.4 Classic Era
+- 7.5 Classic Titan Reforged
+- 7.6 Classic Anniversary
+- 8 See also
+- 9 References
+
+TOC files are addon manifest files, they define the information, contents, metadata, and loading conditions and behaviour of addons. 
+
+Example TOC file: 
+
+```
+## Interface: 120105
+## Title: My AddOn Name
+## Notes: Brief description about what My AddOn does to help people find it
+## Version: 1.0.0
+
+# This line is a comment
+
+MyFrame.xml
+MyCode.lua
+lib\MyCode.lua
+anotherfolder\MoreCode.xml
+
+```
+
+## Rules
+
+- The file extension suffix for TOC files is `.toc`.
+- The TOC file and folder name must match. 
+
+- Example: `\Interface\AddOns\AddOnName\AddOnName.toc`
+- The TOC file can contain the following: 
+
+- Directives as `## Directive: Value`
+- Comments as `# this is a comment`
+- A list of files as `myFile.xml` or `subfolder\myFile.lua`
+
+- Only Lua and XML files need to be listed (not media such as images, fonts, and sounds).
+- Files are loaded sequentially from top to bottom.
+- XML files can also load files with `Script` or `Include` tags.
+- Backslashes (`\`) are recommended instead of forward slashes (`/`) for paths to prevent issues with `Include` tags.
+- Whitespace before `#` will be interpreted as the start of a filename, however, the client trims whitespace around metadata values (after the colon).
+- The game reads up to the first 1024 characters of each line only. 
+
+- Any additional characters are silently ignored.
+- Newly created/added files (and even complete addons) are detected when doing a `/reload` after the game has started. 
+
+- If you delete or rename a TOC file already loaded by the game you will however need a full game restart.
+
+## Naming
+
+Addons can ship multiple TOC files with different file name suffixes in order to load a different TOC for specific game types or their families. [1] 
+
+The game first searches for TOC files with these suffixes (examples below), and if none are found to match its game type (or its aliases) it will default to `AddOnName.toc` without a suffix. Family suffixes have a lower priority; for example, having both `AddOnName_Standard.toc` and `AddOnName_Mainline.toc` will result in the former being used for Midnight, and the latter for all other Mainline-family game types. 
+
+ Note: Comma-delimited interface versions or inline directives should be preferred over the use of game type specific TOC files where possible.
+
+Game suffixes [edit] 
+
+| Game type | Expansion/Mode | | Suffix |
+| --- | --- | --- | --- |
+| `standard` | | Midnight | `AddOnName_Standard.toc` |
+| `forever` `camelot` | | Forever | `AddOnName_Forever.toc` `AddOnName_Camelot.toc` |
+| `mists` | | Mists of Pandaria Classic | `AddOnName_Mists.toc` |
+| `cata` | | Cataclysm Classic | `AddOnName_Cata.toc` |
+| `wrath` | | Wrath of the Lich King Classic and Titan Reforged | `AddOnName_Wrath.toc` |
+| `tbc` | | Burning Crusade Classic & Classic Anniversary Edition | `AddOnName_TBC.toc` |
+| `vanilla` | | Classic Eras before expansions | `AddOnName_Vanilla.toc` |
+| `plunderstorm` | | Plunderstorm | `AddOnName_Plunderstorm.toc` `AddOnName_WoWLabs.toc` |
+| `wowhack` | | Talebound | `AddOnName_WoWHack.toc` |
+
+Family suffixes [edit] 
+
+| Family | Games | Suffix |
+| --- | --- | --- |
+| `mainline` | `standard`, `forever`, `camelot`, `plunderstorm`, `wowhack` | `AddOnName_Mainline.toc` |
+| `classic` | `vanilla`, `tbc`, `wrath`, `cata`, `mists` | `AddOnName_Classic.toc` |
+
+## Variables
+
+TOC files support the use of variable expansions for files. They use the syntax `[Variable]`, and can appear anywhere in a line. 
+
+Family
+: Expands to a game type family (e.g., Mainline, or Classic) based on the client's game type.
+Game
+: Expands to a game type (e.g., Standard, Vanilla, Camelot [note 1], TBC, Wrath, or Mists) based on the client's game type.
+TextLocale
+: Expands to a locale based on the client's configured text locale (e.g., enUS, deDE, or frFR).
+RegionalTextLocale
+: ✔︎ Only supported in: Midnight 12.1.7 and Forever.
+: Expands to a region specific locale based on the client's configured text locale and region (e.g., enGB and ptPT in the EU region vs enUS and ptBR in the NA region).
+
+1. ^ The Camelot value may be changed to Forever in the future.
+
+```
+## Interface: 120105
+## Title: My Cool AddOn
+## Notes: My addon is working.
+
+# This will load "Mainline\File.lua" or "Classic\File.lua"
+# as appropriate for the client.
+[Family]\File.lua
+
+# This will load "Standard\File.lua", "Mists\File.lua", "Cata\File.lua", ...
+# as appropriate for the client.
+[Game]\File.lua
+
+# This will load "Localization\enUS.lua", "Localization\frFR.lua", ...
+# as appropriate for the client text locale.
+Localization\[TextLocale].lua
+
+```
+
+## Inline directives
+
+TOC files support the inline use of directives which define the conditions under or behaviour with which their corresponding addon directive or file will apply. They use the syntax `[Directive]` or `[Directive value]` with case insensitive values. Multiple inline directives can be used per line, and can appear anywhere in a line. 
+
+ Note: For reasons of compatibility, inline directives should generally only ever be used at the end of a line.
+
+The following directives are supported inline: 
+
+AllowLoad
+: Restricts the addon directive or file to in-game (Game), glue screen (Glue), or both (Both) environments.
+: Note: Functionally inoperable for addons, as only Blizzard addons are loaded within the glue screen environment.
+AllowLoadGameType
+: Restricts the addon directive or file to one or multiple specific game types, delimited by commas.
+: The possible values are the same as used by the AllowLoadGameType directive.
+: Warning: If at least 1 game type is specified and none of the game types are recognized by the client, the condition will still be satisfied. For this reason, you should additionally use ExcludeLoadGameType inline to exclude game types that are not universally recognized yet.
+ExcludeLoadGameType
+: Similar to `[AllowLoadGameType ...]`, but restricts the addon directive or file to the game type(s) not listed.
+AllowLoadTextLocale
+: Restricts the addon directive or file to one or more specific client text locales, delimited by commas.
+: The possible values are the same as returned by GetLocale, eg. "enUS" and "frFR".
+AllowLoadEnvironment
+: Restricts the addon directive or file to the global (Global) or secure (Secure) environment.
+: Note: Functionally inoperable for addons, as only Blizzard addons are loaded within the secure environment.
+Bootstrap
+: ✔︎ Only supported in: Midnight and Forever.
+: Restricts the addon directive or file to the bootstrap process for LoadOnDemand addons.
+LoadIntoEnvironment
+: Loads the file into the global (Global) or secure (Secure) environment.
+: Note: Functionally inoperable for addons, as only Blizzard code can be loaded into the secure environment.
+
+```
+## Interface: 120105
+## Title: My Cool AddOn
+## Title: My Cool AddOn in Classic [AllowLoadGameType classic]
+
+# This will only be loaded on Standard (retail).
+StandardOnly.lua [AllowLoadGameType standard]
+
+# This will only be loaded on Camelot (forever).
+ForeverOnly.lua [AllowLoadGameType camelot][ExcludeLoadGameType standard, classic]
+
+# This will only be loaded in Vanilla or TBC.
+VanillaOrTBC.lua [AllowLoadGameType vanilla, tbc]
+
+# This will only be loaded under English or French client locales.
+EnglishOrFrenchOnly.lua [AllowLoadTextLocale enUS, frFR]
+
+```
+
+## Addon directives
+
+Addon directives are lines that define the information, metadata, and loading conditions and behaviour of addons. They use the syntax `## Directive: Value`. Generally, if an addon directive is specified multiple times, the last one (with consideration for inline directives) will be used. Those that have exceptions to this rule are noted. Where multiple values are supported, they may be delimited by commas. 
+
+### Interface
+
+Defines which interface versions the addon supports. An interface version is a single number representation of a client version (e.g., for 12.1.5, the interface version is 120105). 
+
+If an addon doesn't set an interface version that matches the client's, then it's classified as out-of-date. 
+
+```
+# single value for the latest retail version
+## Interface: 120105
+
+# multiple values, for retail + classic + classic era
+## Interface: 120105, 50504, 11509
+
+```
+
+Current values per game type (and release channel): 
+
+ Note: These values are maintained by contributors, so they may not always be up to date.
+
+| Game type | | Interface |
+| --- | --- | --- |
+| | Standard Beta | `120001` |
+| | Standard Test | `120107` |
+| | Standard | `120105` |
+| | Mists Test | `50504` |
+| | Mists | `50504` |
+| | Cata | `40402` |
+| | Wrath (Titan Reforged) | `38002` |
+| | Wrath | `30405` |
+| | TBC Test | `20506` |
+| | TBC | `20506` |
+| | Forever Beta | `16001` |
+| | Forever Test | `16001` |
+| | Forever | |
+| | Vanilla Test | `11508` |
+| | Vanilla | `11509` |
+
+The current version for the client can always be dumped within the game using GetBuildInfo: 
+
+### Displayed text and organization
+
+The following addon directives change how an addon is organised and displayed as text in various locations within the game (e.g., the AddOn List, compartment, and tooltips). Their values may be coloured using UI escape sequences (e.g., |c########|r). 
+
+Similar to the AllowLoadLocale inline directive, these addon directives may also be localized by appending a hyphen and the locale code (e.g., Title-enUS). 
+
+ Note: A non-localized fallback should always be specified before localized ones, otherwise they will be unused.
+
+Name displayed in the AddOn List. 
+
+```
+## Title: Waiting for Godot
+## Title-frFR: En attendant Godot
+
+```
+
+Tooltip displayed in the AddOn List. 
+
+```
+## Notes: This word is |cFFFF0000red|r
+## Notes-itIT: La parola è |cFFFF0000rossa|r
+
+```
+
+##### Category
+
+Category name displayed in the AddOn List, displayed as a collapsible header entry. It is strongly recommended that you stick to the translated category names found on the Addon Categories page. This will ensure that your addon is consistently located with other addons in the same category across all locales. 
+
+```
+## Category: This is a test
+## Category-deDE: Dies ist ein Test
+
+```
+
+##### Group
+
+Addon used for grouping multiple addons together in the AddOn List. 
+
+- The value must be the name of the main addon.
+- Grouped addons are displayed in the AddOn List as indented sub-lists. These lists cannot be collapsed, unlike Categories. 
+
+- Nested groups are not supported by the AddOn List.
+- If no Group has been manually specified, the client will attempt to automatically deduce membership of a group. 
+
+- Installed addons will be scanned to locate pairs of addons where the base name of one addon is a complete prefix of another, and where any form of dependency relation exists between the two in either direction.
+
+```
+## Group: FooAuras
+
+```
+
+### Displayed icons
+
+The following addon directives change how an AddOn is displayed as an icon in various locations within the game (e.g., the AddOn List and compartment). 
+
+##### IconTexture
+
+Path to a texture file to be shown as the icon for this addon in the AddOn List. 
+
+```
+## IconTexture: Interface\Icons\TEMP
+
+```
+
+##### IconAtlas
+
+Name of a texture atlas to be shown as the icon for this addon in the AddOn List. Has a lower priority than IconTexture if both are set. 
+
+```
+## IconAtlas: TaskPOI-Icon
+
+```
+
+### Addon compartment integration
+
+ This section concerns content related to Midnight and Forever.
+
+The following addon directives will control the registration of the addon into the addon compartment dropdown accessible from the minimap. 
+
+#### AddonCompartmentFunc
+
+Name of a global function to be executed when the entry for this addon has been clicked in the addon compartment. 
+
+ Note: This directive is required to show the addon in the addon compartment dropdown when using automatic registration.
+
+```
+## AddonCompartmentFunc: MyAddon_OnAddonCompartmentClick
+
+```
+
+#### AddonCompartmentFuncOnEnter
+
+Name of a global function to be executed when the entry for this addon has been highlighted in the addon compartment dropdown. 
+
+```
+## AddonCompartmentFuncOnEnter: MyAddon_OnAddonCompartmentEnter
+
+```
+
+#### AddonCompartmentFuncOnLeave
+
+Name of a global function to be executed when the entry for this addon is no longer highlighted in the addon compartment dropdown. 
+
+```
+## AddonCompartmentFuncOnLeave: MyAddon_OnAddonCompartmentLeave
+
+```
+
+### Loading conditions
+
+The following addon directives control when an addon loads, and any dependencies that must or may load first. 
+
+#### LoadOnDemand
+
+Set to 1 to delay loading until `C_AddOns.LoadAddOn` is called. 
+
+```
+## LoadOnDemand: 1
+
+```
+
+Addons that must load first. Aliases include RequiredDeps and any word beginning with `Dep`. 
+
+ Note: This directive may be specified multiple times, with later instances appending to the list.
+
+```
+## Dependencies: someAddOn, someOtherAddOn
+## Dep: yetAnotherAddOn
+
+```
+
+#### OptionalDeps
+
+Addons that must load first if available. 
+
+```
+## OptionalDeps: someAddOn, someOtherAddOn
+
+```
+
+#### LoadWith
+
+Addons that, once loaded, will trigger this one to load. Also causes this addon to behave as LoadOnDemand. 
+
+ Note: This directive may be specified multiple times, with later instances appending to the list.
+
+```
+## LoadWith: someAddOn, someOtherAddOn
+
+```
+
+#### LoadManagers
+
+Addons that, if present, will cause this one to behave as LoadOnDemand. See AddonLoader for an example. 
+
+ Note: This directive may be specified multiple times, with later instances appending to the list.
+
+```
+## LoadManagers: someAddOn, someOtherAddOn
+
+```
+
+#### AllowLoadGameType
+
+Restricts loading this addon to case-insensitive game types or thier families. 
+
+ Note: This addon directive may be specified multiple times, with later instances appending to the list.
+
+```
+## AllowLoadGameType: standard, classic
+
+```
+
+ Note: Some game modes may be restricted to disallow loading of third-party addons.
+
+ Warning: If at least 1 game type is specified and none of the game types are recognized by the client, the condition will be satisfied. For this reason, you should additionally use ExcludeLoadGameType to exclude game types that are not universally recognized yet.
+
+Game types [edit] 
+
+| Game type | Expansion/Mode | |
+| --- | --- | --- |
+| `standard` | | Midnight |
+| `forever` `camelot` | | Forever |
+| `mists` | | Mists of Pandaria Classic |
+| `cata` | | Cataclysm Classic |
+| `wrath` | | Wrath of the Lich King Classic and Titan Reforged |
+| `tbc` | | Burning Crusade Classic & Classic Anniversary Edition |
+| `vanilla` | | Classic Eras before expansions |
+| `plunderstorm` | | Plunderstorm |
+| `wowhack` | | Talebound |
+
+Game type famlies [edit] 
+
+| Family | Games |
+| --- | --- |
+| `mainline` | `standard`, `forever`, `camelot`, `plunderstorm`, `wowhack` |
+| `classic` | `vanilla`, `tbc`, `wrath`, `cata`, `mists` |
+
+#### ExcludeLoadGameType
+
+Similar to AllowLoadGameType, but prevents loading this addon on specific game types or their families. 
+
+ Note: This addon directive may be specified multiple times, with later instances appending to the list.
+
+```
+## ExcludeLoadGameType: vanilla, wrath
+
+```
+
+#### OnlyBetaAndPTR
+
+Set to 1 if an addon should only be loadable in Beta or PTR clients. 
+
+```
+## OnlyBetaAndPTR: 1
+
+```
+
+#### DefaultState
+
+Set to disabled to require the user to explicitly enable the addon in the AddOn List. 
+
+```
+## DefaultState: disabled
+
+```
+
+### Saved variables
+
+: Main article: Saving variables between game sessions
+
+#### LoadSavedVariablesFirst
+
+Set to 1 if SavedVariables file(s) should be loaded before all script files for this addon. 
+
+ Note: If this is set to 1 it cannot be turned off later in the file.
+
+```
+## LoadSavedVariablesFirst: 1
+
+```
+
+#### SavedVariables
+
+Global variables to be stored in and read from `WTF\[account]\SavedVariables\MyAddOn.lua`. 
+
+ Note: This addon directive may be specified multiple times, with later instances appending to the list.
+
+```
+## SavedVariables: MyAddOnNameVariableFoo, MyAddOnNameVariableBar
+
+```
+
+#### SavedVariablesPerCharacter
+
+Global variables to be stored in and read from `WTF\[account]\[server]\[character]\SavedVariables\MyAddOn.lua`. 
+
+ Note: This directive may be specified multiple times, with later instances appending to the list.
+
+```
+## SavedVariablesPerCharacter: MyAddOnNameCharacterVariableFoo, MyAddOnNameCharacterVariableBar
+
+```
+
+### Metadata
+
+The following addon directives may be accessed using C_AddOns.GetAddOnMetadata. 
+
+#### Author
+
+```
+## Author: My Name
+
+```
+
+The addon version, which will be shown in the tooltip in the AddOn List. 
+
+ Note: Some automatic updating tools may prefer that this begins with a numeric version number.
+
+```
+## Version: 1.0.0
+
+```
+
+#### X-___
+
+Any custom metadata prefixed by "X-", such as "X-Date", "X-Website" or "X-Feedback" 
+
+```
+## X-Website: https://github.com/MyUser/MyAddOn
+
+```
+
+#### AllowAddOnTableAccess
+
+Set to 1 to allow the retrieval of the namespace table of this addon via C_AddOns.GetAddOnLocalTable. 
+
+ Note: If this is set to 1, and further instances of it will be ignored.
+
+```
+## AllowAddOnTableAccess: 1
+
+```
+
+### Restricted
+
+The following addon directives are inaccessible to third-party addons. 
+
+#### AllowLoad
+
+Restricts loading this addon to the GlueXML environment, FrameXML environment, or both. 
+
+Both
+: Allow this addon to load without restriction in all environments.
+Game
+: Only load this addon in the FrameXML environment.
+Glue
+: Only load this addon in the GlueXML environment.
+
+#### EscalateErrorDuringLoad
+
+Boolean addon directive that appears to have no effect in public clients. 
+
+#### LoadFirst
+
+Set to 1 if a secure addon is not permitted to be disabled and should be loaded before any other addons without this flag. 
+
+#### SavedVariablesMachine
+
+List of global variable names to be persisted across all accounts on the same machine. 
+
+#### UseSecureEnvironment
+
+Set to 1 if all files present in an addon should be loaded into a private function environment. 
+
+## Inline directives
+
+TOC files support the inline use of a set of directives, which define the conditions under or behaviour with which their corresponding addon directive or file will apply. They use the syntax `[Directive]` or `[Directive Value]` with case insensitive values. Multiple inline directices can be used per line, and can appear anywhere in a line. 
+
+ Note: For reasons of compatibility, inline directives should generally only ever be used at the end of a line.
+
+The following directives are supported inline: 
+
+AllowLoad
+: Restricts the addon directive or file to in-game (Game), glue screen (Glue), or both (Both) environments.
+: Note: Functionally inoperable for addons, as only Blizzard addons are loaded within the glue screen environment.
+AllowLoadGameType
+: Restricts the addon directive or file to one or multiple specific game types, delimited by commas.
+: The possible values are the same as used by the AllowLoadGameType directive.
+: Warning: If at least 1 game type is specified and none of the game types are recognized by the client, the condition will still be satisfied. For this reason, you should additionally use ExcludeLoadGameType inline to exclude game types that are not universally recognized yet.
+ExcludeLoadGameType
+: Similar to `[AllowLoadGameType ...]`, but restricts the addon directive or file to the game type(s) not listed.
+AllowLoadTextLocale
+: Restricts the addon directive or file to one or more specific client text locales, delimited by commas.
+: The possible values are the same as returned by GetLocale, eg. "enUS" and "frFR".
+AllowLoadEnvironment
+: Restricts the addon directive or file to the global (Global) or secure (Secure) environment.
+: Note: Functionally inoperable for addons, as only Blizzard addons are loaded within the secure environment.
+Bootstrap
+: Restricts the addon directive or file to the bootstrap process for LoadOnDemand addons.
+LoadIntoEnvironment
+: Loads the file into the global (Global) or secure (Secure) environment.
+: Note: Functionally inoperable for addons, as only Blizzard code can be loaded into the secure environment.
+
+```
+## Interface: 120105
+## Title: My Cool AddOn
+## Title: My Cool AddOn in Classic [AllowLoadGameType classic]
+
+# This will only be loaded on Standard (retail).
+StandardOnly.lua [AllowLoadGameType standard]
+
+# This will only be loaded on Camelot (forever).
+ForeverOnly.lua [AllowLoadGameType camelot][ExcludeLoadGameType standard, classic]
+
+# This will only be loaded in Vanilla or TBC.
+VanillaOrTBC.lua [AllowLoadGameType vanilla, tbc]
+
+# This will only be loaded under English or French client locales.
+EnglishOrFrenchOnly.lua [AllowLoadTextLocale enUS, frFR]
+
+```
+
+### Modern
+
+- Patch 12.1.7 (PTR):
+
+- Added RegionalTextLocale variable.
+- Prevented use of variables in addon directives. 
+- Patch 12.1.5 (2026-10-13): Added Standard TOC suffix. 
+- Patch 12.1.0 (2026-08-11): Added Bootstrap inline directive. 
+- Patch 12.0.7 (2026-06-16): Added inline directives and variables for addon directives. 
+- Patch 12.0.0 (2026-01-20): Added ExcludeLoadGameType directive. 
+- Patch 11.2.0 (2025-08-05): Added the TextLocale variable and AllowLoadTextLocale directive. 
+- Patch 11.1.7 (2025-06-17): Added the AllowAddOnTableAccess addon directive. 
+- Patch 11.1.5 (2025-04-22):
+
+- Added variables for files.
+- Added a subset of directives as inline directives for files.
+- Added the LoadSavedVariablesFirst addon directive.
+- AllowLoadGameType is now usable by insecure addons. 
+- Patch 11.1.0 (2025-02-25): Added the Category and Group addon directives. 
+- Patch 11.0.0 (2024-07-23):
+
+- Added the restricted UseSecureEnvironment addon directive.
+- Removed the SuppressLocalTableRef addon directive. 
+- Patch 10.2.7 (2024-05-07):
+
+- Added support for comma-delimited Interface versions.
+- Added the restricted SuppressLocalTableRef addon directive.
+- Renamed AllowLoadByGameMode and GuardedAddOn directives to AllowLoadGameType and LoadFirst, respectively. 
+- Patch 10.2.6 (2024-03-19): Added the restricted AllowLoadByGameMode addon directive. 
+- Patch 10.1.0 (2023-05-02):
+
+- Added IconAtlas, IconTexture, and Addon compartment related addon directives.
+- Added the restricted GuardedAddOn addon directive. 
+- Patch 9.1.0 (2021-06-29): Multiple TOC files are now supported using a suffix to disambiguate Classic, BCC and Retail. [1] 
+- Patch 9.0.1 (2020-10-13):`/reload` recognizes changes to TOC directives and entirely new files in the `Interface/AddOns/` directory tree. 
+- Patch 4.0.1 (2010-10-12):`/reload` recognizes changes to the file order. 
+- Patch 2.1.0 (2007-05-22): Added the LoadManagers addon directive. 
+- Patch 1.11.0 (2006-06-19): Added the Secure addon directive. 
+- Patch 1.9.0 (2006-01-03): Added the LoadWith addon directive. 
+
+### Forever
+
+- Patch 1.60.1 (Beta):
+
+- Includes all Modern changes up to 12.1.5
+- Added Camelot game type, Game variable value and TOC suffix, with Forever game type and TOC suffix alias. 
+
+### Classic Progression
+
+- Patch 5.5.4 (2026-06-02): Includes all Modern changes up to 12.0.7. 
+- Patch 5.5.1 (2025-09-23): Includes all Modern changes up to 11.2.0. 
+- Patch 5.5.0 (2025-07-01): Includes all Modern changes up to 11.1.7. 
+- Patch 4.4.1 (2024-10-29): Includes all Modern changes up to 11.0.0. 
+- Patch 4.4.0 (2024-04-30):
+
+- Includes all Modern changes up to 10.2.7.
+- The behavior of the `_Classic` TOC suffix has changed such that it now loads on all Classic clients, and not just Classic Era. 
+- Patch 2.5.3 (2022-01-18):`/reload` recognizes changes to TOC directives and entirely new files in the `Interface/AddOns/` directory tree. 
+- Patch 2.5.1 (2021-05-18): Multiple TOC files are now supported using a suffix to disambiguate Classic, BCC and Retail. [1] 
+- Patch 1.13.2 (2019-08-26): Includes all Modern changes up to 8.1.0. 
+
+### Classic Era
+
+- Patch 1.15.9 (2026-07-21): Includes all Modern changes up to 12.0.7. 
+- Patch 1.15.8 (2025-10-21): Includes all Modern changes up to 11.2.0. 
+- Patch 1.15.4 (2024-09-24): Includes all Modern changes up to 11.0.0. 
+- Patch 1.14.0 (2021-09-28):
+
+- Includes all Classic Progression changes up to 2.5.2.
+- `/reload` recognizes changes to TOC directives and entirely new files in the `Interface/AddOns/` directory tree. 
+- Patch 1.13.7 (2021-04-20): Multiple TOC files are now supported using a suffix to disambiguate Classic, BCC and Retail. [1] 
+
+### Classic Titan Reforged
+
+- Patch 3.80.2 (2026-07-29): Includes all Modern changes up to 12.0.7. 
+- Patch 3.80.0 (2025-11-18):
+
+- Includes all Classic Era changes up to 1.15.8.
+- The behavior of the Classic TOC suffix has changed such that it now loads on all Classic clients, and not just Classic Era.
+- The legacy WOTLK TOC suffix is no longer supported. 
+
+### Classic Anniversary
+
+- Patch 2.5.6 (2026-07-07): Includes all Modern changes up to 12.0.7. 
+- Patch 2.5.5 (2026-01-13):
+
+- Includes all all Classic Era changes up to 1.15.8.
+- The behavior of the Classic TOC suffix has changed such that it now loads on all Classic clients, and not just Classic Era.
+- The legacy BCC TOC suffix is no longer supported. 
+
+- C_AddOns.GetAddOnInfo returns basic information about an addon.
+- Using the AddOn namespace describes the parameters passed to each file.
+
+## References
+
+1. ^ a b c d Meo rawr. Multiple Interface Version Support. WoWUIBugs.
